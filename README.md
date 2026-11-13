@@ -76,3 +76,7 @@ Two things worth knowing:
 
 - The app icon and menu bar glyph are drawn in code (`Design/StarShapes.swift`, `Design/AppIconView.swift`). The build script renders the icon at every size and packs the `.icns`.
 - Views use `@Stored` instead of `@State`. In the macOS 27 SDK `@State` is a compiler macro whose plugin ships only with Xcode; `Stored` is an alias for the same SwiftUI type that builds with the Command Line Tools alone. See `Design/Stored.swift`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
