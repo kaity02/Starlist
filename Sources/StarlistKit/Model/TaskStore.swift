@@ -16,6 +16,9 @@ public final class TaskStore: ObservableObject {
 
     public var doneCount: Int { items.filter(\.isDone).count }
 
+    /// True when there is at least one task and none are left unfinished.
+    public var isAllDone: Bool { !items.isEmpty && items.allSatisfy(\.isDone) }
+
     @discardableResult
     public func add(_ rawTitle: String) -> TodoItem? {
         let title = Self.clean(rawTitle)

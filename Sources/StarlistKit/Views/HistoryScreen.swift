@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Every archived list, newest first, read straight from the Markdown files.
+/// The star calendar, then every archived list, newest first, read straight
+/// from the Markdown files.
 struct HistoryScreen: View {
     @ObservedObject var model: AppModel
 
@@ -8,20 +9,55 @@ struct HistoryScreen: View {
         VStack(spacing: 0) {
             header
 
-            Group {
-                if model.archive.lists.isEmpty {
-                    if model.archive.hasLoaded {
-                        SkyMessage(
-                            title: "No archived lists yet",
-                            detail: "Choose Archive list and your tasks are saved here as a Markdown file."
-                        )
-                    } else {
-                        Color.clear
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    StarMap(stars: model.stars, today: model.today)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 4)
+
+                    Text("Archived lists, saved in \(model.archive.folderDisplayPath)")
+                        .font(Face.text(12))
+                        .foregroundStyle(Sky.haze)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(model.archive.folderURL.path)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 20)
+                        .padding(.bottom, 4)
+
+                    if !model.archive.lists.isEmpty {
+                        VStack(spacing: 1) {
+                            ForEach(model.archive.lists) { list in
+                                ArchiveRow(
+                                    list: list,
+                                    isExpanded: model.expandedArchive == list.id,
+                                    model: model
+                                )
+                            }
+                        }
+                    } else if model.archive.hasLoaded {
+                        Text("Nothing archived yet. Choose Archive list and your tasks are saved here as a Markdown file.")
+                            .font(Face.text(13))
+                            .foregroundStyle(Sky.moonlight.opacity(0.85))
+                            .lineSpacing(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 12)
+                            .padding(.top, 6)
                     }
-                } else {
-                    archiveList
                 }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .mask(
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 8)
+                    Rectangle()
+                    LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 8)
+                }
+            )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             HStack {
@@ -51,41 +87,13 @@ struct HistoryScreen: View {
                     .padding(.trailing, -10)
                     .padding(.top, 4)
             }
-            Text("Markdown files in \(model.archive.folderDisplayPath)")
+            Text("A star for each day you finished everything.")
                 .font(Face.text(13))
                 .foregroundStyle(Sky.haze)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .help(model.archive.folderURL.path)
         }
         .padding(.horizontal, PanelMetrics.gutter)
         .padding(.top, 18)
-        .padding(.bottom, 8)
-    }
-
-    private var archiveList: some View {
-        ScrollView {
-            VStack(spacing: 1) {
-                ForEach(model.archive.lists) { list in
-                    ArchiveRow(
-                        list: list,
-                        isExpanded: model.expandedArchive == list.id,
-                        model: model
-                    )
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-        }
-        .mask(
-            VStack(spacing: 0) {
-                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 8)
-                Rectangle()
-                LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 8)
-            }
-        )
+        .padding(.bottom, 4)
     }
 }
 

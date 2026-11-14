@@ -63,7 +63,7 @@ struct TaskRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
             CheckButton(title: item.title, isDone: item.isDone) {
-                model.store.toggle(item.id)
+                model.toggle(item.id)
             }
             .padding(.top, -2)
 
@@ -98,7 +98,7 @@ struct TaskRow: View {
         .contextMenu {
             Button("Edit") { model.beginEditing(item.id) }
             Button(item.isDone ? "Mark as not done" : "Mark as done") {
-                model.store.toggle(item.id)
+                model.toggle(item.id)
             }
             Divider()
             Button("Delete", role: .destructive) { model.store.remove(item.id) }

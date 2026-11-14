@@ -29,7 +29,6 @@ public enum ArchiveMarkdown {
     public static func render(
         items: [TodoItem],
         archivedAt: Date,
-        keepsUnfinished: Bool,
         locale: Locale = .current,
         timeZone: TimeZone = .current
     ) -> String {
@@ -57,7 +56,7 @@ public enum ArchiveMarkdown {
             lines += done.map { "- [x] \(TaskStore.clean($0.title))" }
         }
         if !open.isEmpty {
-            lines += ["", keepsUnfinished ? "## Carried over" : "## Not done", ""]
+            lines += ["", "## Not done", ""]
             lines += open.map { "- [ ] \(TaskStore.clean($0.title))" }
         }
         return lines.joined(separator: "\n") + "\n"
@@ -124,13 +123,10 @@ public enum ArchiveFiles {
     public static func save(
         items: [TodoItem],
         archivedAt: Date,
-        keepsUnfinished: Bool,
         in folder: URL
     ) throws -> URL {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let markdown = ArchiveMarkdown.render(
-            items: items, archivedAt: archivedAt, keepsUnfinished: keepsUnfinished
-        )
+        let markdown = ArchiveMarkdown.render(items: items, archivedAt: archivedAt)
         let data = Data(markdown.utf8)
         for attempt in 1...999 {
             let url = folder.appendingPathComponent(
@@ -222,12 +218,10 @@ public final class ArchiveStore: ObservableObject {
         hasLoaded = true
     }
 
-    public func save(items: [TodoItem], keepsUnfinished: Bool, at date: Date = Date()) async throws -> URL {
+    public func save(items: [TodoItem], at date: Date = Date()) async throws -> URL {
         let folder = folderURL
         let url = try await Task.detached(priority: .userInitiated) {
-            try ArchiveFiles.save(
-                items: items, archivedAt: date, keepsUnfinished: keepsUnfinished, in: folder
-            )
+            try ArchiveFiles.save(items: items, archivedAt: date, in: folder)
         }.value
         await refresh()
         return url
