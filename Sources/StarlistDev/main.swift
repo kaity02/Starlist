@@ -578,6 +578,29 @@ func runChecks() async throws {
         expect(model.notion.pending.isEmpty, "nothing is queued while Notion isn't connected")
         try await Task.sleep(for: .milliseconds(100))
 
+        // Setting up means leaving the panel to copy things from Notion.
+        model.panelWillAppear(showing: .notion)
+        model.panelDidClose()
+        model.panelWillAppear()
+        expect(model.screen == .notion, "reopening the panel during Notion setup returns to the form")
+        model.notionSecretDraft = "secret_abc"
+        model.setupResumeWindow = 0
+        model.panelDidClose()
+        model.panelWillAppear()
+        expect(model.screen == .notion && model.notionSecretDraft == "secret_abc",
+               "a pasted secret is still there after the panel closes and reopens")
+        model.showList()
+        model.panelDidClose()
+        model.panelWillAppear()
+        expect(model.screen == .list && model.notionSecretDraft == "secret_abc",
+               "going back to the list stays on the list, and keeps what was pasted")
+        model.notionSecretDraft = ""
+        model.panelWillAppear(showing: .notion)
+        model.panelDidClose()
+        model.panelWillAppear()
+        expect(model.screen == .list, "an untouched setup form is not reopened long afterwards")
+        model.setupResumeWindow = 30 * 60
+
         do {
             try await model.notion.connect(secret: "  secret_abc\n", pageLink: "not a link")
             expect(false, "rejects a bad page link")
@@ -587,6 +610,10 @@ func runChecks() async throws {
         try await model.notion.connect(secret: "  secret_abc\n", pageLink: samplePage)
         expect(model.notion.link?.pageTitle == "Work progress" && model.notion.link?.pageID == samplePageID,
                "connecting reads the page's title")
+        model.panelWillAppear(showing: .notion)
+        model.panelDidClose()
+        model.panelWillAppear()
+        expect(model.screen == .list, "once connected, the panel opens on the list again")
         let first = notionServer.calls.last!
         expect(first.headers["Authorization"] == "Bearer secret_abc"
                && first.headers["Notion-Version"] == "2026-03-11",

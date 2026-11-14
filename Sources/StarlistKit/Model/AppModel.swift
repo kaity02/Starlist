@@ -40,6 +40,15 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var composerFocusRequest = 0
     /// Bumped each time the last unfinished task is checked off.
     @Published public private(set) var celebration = 0
+    /// What has been typed into the Notion setup form. Kept here, not in the
+    /// view, so it survives the panel closing while you fetch the other half
+    /// from Notion. Never written to disk.
+    @Published public var notionSecretDraft = ""
+    @Published public var notionLinkDraft = ""
+
+    /// How long after the panel closes it still reopens on Notion setup,
+    /// when nothing has been typed there yet.
+    public var setupResumeWindow: TimeInterval = 30 * 60
 
     public var isFirstLaunch: Bool { settings.isFirstLaunch }
 
@@ -53,6 +62,7 @@ public final class AppModel: ObservableObject {
 
     private var lastArchive: (fileURL: URL, snapshot: [TodoItem], notionEntry: UUID?)?
     private var bannerTask: Task<Void, Never>?
+    private var panelClosedAt: Date?
     private var cancellables: Set<AnyCancellable> = []
 
     public init(paths: AppPaths = .standard, transport: NotionTransport = URLSessionTransport()) {
@@ -87,13 +97,28 @@ public final class AppModel: ObservableObject {
 
     // MARK: Panel lifecycle
 
-    public func panelWillAppear(showing screen: Screen = .list) {
+    /// `requested` is the screen a menu item asked for. Without one the panel
+    /// opens on the list, unless Notion setup was left half done.
+    public func panelWillAppear(showing requested: Screen? = nil) {
         today = Date()
         editingID = nil
-        self.screen = screen
+        screen = requested ?? (resumesNotionSetup ? .notion : .list)
         if screen == .list { focusComposer() }
         // Anything still waiting for Notion (offline earlier, app quit) goes now.
         Task { await sendToNotion(announcing: false) }
+    }
+
+    public func panelDidClose() {
+        panelClosedAt = Date()
+    }
+
+    /// Setting up Notion means leaving the panel to copy a secret and a link,
+    /// and every trip closes it. Come back to the form, not the list.
+    private var resumesNotionSetup: Bool {
+        guard screen == .notion, !notion.isConnected else { return false }
+        if !notionSecretDraft.isEmpty || !notionLinkDraft.isEmpty { return true }
+        guard let panelClosedAt else { return false }
+        return Date().timeIntervalSince(panelClosedAt) < setupResumeWindow
     }
 
     public func focusComposer() {

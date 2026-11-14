@@ -5,8 +5,6 @@ import SwiftUI
 struct NotionScreen: View {
     @ObservedObject var model: AppModel
 
-    @Stored private var secret = ""
-    @Stored private var pageLink = ""
     @Stored private var connectError: String?
 
     private let integrationsURL = URL(string: "https://www.notion.so/profile/integrations")!
@@ -58,8 +56,8 @@ struct NotionScreen: View {
             .padding(.leading, -10)
             .padding(.vertical, -4)
 
-            SkyField(placeholder: "Integration secret", text: $secret, isSecret: true)
-            SkyField(placeholder: "Page link", text: $pageLink)
+            SkyField(placeholder: "Integration secret", text: $model.notionSecretDraft, isSecret: true)
+            SkyField(placeholder: "Page link", text: $model.notionLinkDraft)
 
             if let connectError {
                 Text(connectError)
@@ -76,7 +74,10 @@ struct NotionScreen: View {
                 PrimaryButton(title: model.notion.isWorking ? "Connecting…" : "Connect") {
                     connect()
                 }
-                .disabled(model.notion.isWorking || secret.isEmpty || pageLink.isEmpty)
+                .disabled(
+                    model.notion.isWorking
+                        || model.notionSecretDraft.isEmpty || model.notionLinkDraft.isEmpty
+                )
             }
         }
         .padding(.top, 2)
@@ -101,9 +102,11 @@ struct NotionScreen: View {
         connectError = nil
         Task {
             do {
-                try await model.notion.connect(secret: secret, pageLink: pageLink)
-                secret = ""
-                pageLink = ""
+                try await model.notion.connect(
+                    secret: model.notionSecretDraft, pageLink: model.notionLinkDraft
+                )
+                model.notionSecretDraft = ""
+                model.notionLinkDraft = ""
             } catch let error as NotionError {
                 connectError = error.message
             } catch {

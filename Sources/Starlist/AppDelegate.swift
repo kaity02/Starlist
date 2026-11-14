@@ -167,7 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.contentView = host
     }
 
-    private func showPanel(showing screen: AppModel.Screen = .list) {
+    private func showPanel(showing screen: AppModel.Screen? = nil) {
         model.panelWillAppear(showing: screen)
         panel.setFrameOrigin(panelOrigin())
         // No fade: the panel must never depend on an animation finishing to be visible.
@@ -189,6 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard panel.isVisible else { return }
         panel.orderOut(nil)
         statusItem.button?.highlight(false)
+        model.panelDidClose()
     }
 
     /// The panel closed because attention moved somewhere else.
