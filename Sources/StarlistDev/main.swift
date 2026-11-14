@@ -268,6 +268,27 @@ let sampleTasks: [(String, Bool)] = [
     ("Call the dentist", false),
 ]
 
+let sampleLater = [
+    "Renew passport",
+    "Look into pottery classes",
+    "Back up the photo library to the external drive before it fills up",
+    "Plan a weekend in Lisbon",
+]
+
+/// Fills a folder with a list to try the app on: `Starlist --data-dir <dir>`.
+@MainActor
+func writeSampleData(into directory: URL) throws {
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let model = AppModel(paths: .contained(in: directory), transport: FakeNotion())
+    model.store.replaceAll([])
+    model.later.replaceAll([])
+    for (title, done) in sampleTasks.prefix(4) {
+        if let item = model.store.add(title), done { model.store.toggle(item.id) }
+    }
+    for title in sampleLater { model.later.add(title) }
+    print("Wrote sample lists to \(directory.path)")
+}
+
 let samplePage = "https://www.notion.so/team/Work-progress-1429989fe8ac4effbc8f57f56486db54?pvs=4"
 let samplePageID = "1429989f-e8ac-4eff-bc8f-57f56486db54"
 
@@ -336,6 +357,27 @@ func renderSnapshots(into directory: URL) async throws {
 
     try writePNG(try render(StarBurstFrames(), scale: 1), to: out("11-burst.png"))
     print("Wrote 11-burst.png")
+
+    // The Later list: its button on today's list, the list, and the hover actions.
+    let today = try sampleModel("later-today", tasks: Array(sampleTasks.prefix(4)))
+    for title in sampleLater { today.later.add(title) }
+    today.draft = "Try the new ramen place"
+    try await snapshot(
+        RootView(model: today, highlighted: today.store.items[1].id),
+        size: panel, to: out("12-today-with-later.png")
+    )
+
+    let later = try sampleModel("later-list", tasks: Array(sampleTasks.prefix(4)))
+    for title in sampleLater { later.later.add(title) }
+    later.screen = .later
+    try await snapshot(
+        RootView(model: later, highlighted: later.later.items[1].id),
+        size: panel, to: out("13-later.png")
+    )
+
+    let laterEmpty = try sampleModel("later-empty", tasks: [])
+    laterEmpty.screen = .later
+    try await snapshot(RootView(model: laterEmpty), size: panel, to: out("14-later-empty.png"))
 }
 
 // MARK: - Checks
@@ -556,6 +598,51 @@ func runChecks() async throws {
                "weekdays are labeled")
     }
 
+    print("Later list")
+    do {
+        let model = try sampleModel("check-later", tasks: [("One", true), ("Two", false)])
+        let two = model.store.items[1]
+        model.laterDraft = "  Someday  "
+        model.addLaterDraft()
+        expect(model.later.items.map(\.title) == ["Someday"] && model.laterDraft.isEmpty,
+               "a task can be added straight to Later")
+        expect(model.store.items.count == 2, "it is not on today's list")
+        model.draft = "Park this"
+        model.addDraftToLater()
+        expect(model.later.items.map(\.title) == ["Someday", "Park this"]
+               && model.draft.isEmpty && model.store.items.count == 2,
+               "today's field can send a task to Later instead")
+
+        model.moveToLater(model.store.items[0].id)
+        expect(model.store.items.count == 2, "a finished task stays on today's list")
+        model.moveToLater(two.id)
+        expect(model.store.items.map(\.title) == ["One"] && model.later.items.last?.id == two.id,
+               "an unfinished task can be put off until later")
+        expect(model.stars.total == 0 && model.celebration == 0,
+               "putting off the last unfinished task does not earn the star")
+
+        model.moveToToday(two.id)
+        expect(model.store.items.last?.id == two.id && !model.later.items.contains { $0.id == two.id },
+               "and brought back to today")
+        model.toggle(two.id)
+        expect(model.stars.total == 1, "finishing it today earns the star")
+
+        model.beginEditing(model.later.items[0].id)
+        model.finishEditing(model.later.items[0].id, title: "One day")
+        expect(model.later.items[0].title == "One day", "tasks on Later can be renamed")
+
+        await model.archiveList()
+        expect(model.store.items.isEmpty && model.later.items.count == 2,
+               "Archive leaves the Later list alone")
+
+        let relaunched = AppModel(
+            paths: .contained(in: model.store.fileURL.deletingLastPathComponent()),
+            transport: FakeNotion()
+        )
+        expect(relaunched.later.items.map(\.title) == ["One day", "Park this"],
+               "the Later list survives a relaunch")
+    }
+
     print("Notion links")
     do {
         expect(NotionLink.pageID(from: samplePage) == samplePageID, "reads the ID from a page link")
@@ -757,12 +844,14 @@ do {
         try renderIcon(into: URL(fileURLWithPath: arguments[1], isDirectory: true))
     case "snapshot" where arguments.count == 2:
         try await renderSnapshots(into: URL(fileURLWithPath: arguments[1], isDirectory: true))
+    case "sample" where arguments.count == 2:
+        try writeSampleData(into: URL(fileURLWithPath: arguments[1], isDirectory: true))
     case "check":
         try await runChecks()
         print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) failed.")
         if failures > 0 { exit(1) }
     default:
-        print("usage: starlist-dev icon <iconset-dir> | snapshot <out-dir> | check")
+        print("usage: starlist-dev icon <iconset-dir> | snapshot <out-dir> | sample <data-dir> | check")
         exit(64)
     }
     // Clean up sample data.

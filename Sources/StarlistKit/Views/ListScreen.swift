@@ -3,6 +3,8 @@ import SwiftUI
 /// The main screen: today's date, the tasks, the field for a new one.
 struct ListScreen: View {
     @ObservedObject var model: AppModel
+    /// A row to draw as if the pointer were over it, for the snapshot tool.
+    var highlighted: UUID?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -15,7 +17,7 @@ struct ListScreen: View {
                         detail: "Type a task below and press Return."
                     )
                 } else {
-                    TaskList(model: model)
+                    TaskList(model: model, highlighted: highlighted)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -25,7 +27,17 @@ struct ListScreen: View {
                     BannerView(banner: banner, model: model)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
-                Composer(model: model)
+                Composer(
+                    model: model,
+                    placeholder: "Add a task",
+                    text: $model.draft,
+                    onAdd: { model.addDraft() },
+                    alternate: .init(
+                        title: "Later",
+                        help: "Add it to the Later list instead (Command-Return)",
+                        action: { model.addDraftToLater() }
+                    )
+                )
             }
             .padding(.horizontal, 14)
             .animation(.easeOut(duration: 0.22), value: model.banner)
@@ -39,6 +51,13 @@ struct ListScreen: View {
                 }
                 .disabled(model.store.items.isEmpty || model.isArchiving)
                 Spacer()
+                GhostButton(
+                    title: "Later",
+                    count: model.later.items.isEmpty ? nil : model.later.items.count,
+                    help: "Things for another day, kept off today's list"
+                ) {
+                    model.showLater()
+                }
                 GhostButton(title: "History", help: "See the lists you've archived") {
                     model.showHistory()
                 }
@@ -96,13 +115,14 @@ private struct ListHeader: View {
 
 private struct TaskList: View {
     @ObservedObject var model: AppModel
+    var highlighted: UUID?
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 1) {
                     ForEach(model.store.items) { item in
-                        TaskRow(item: item, model: model)
+                        TaskRow(item: item, model: model, showsActions: item.id == highlighted)
                             .id(item.id)
                             .transition(.opacity)
                     }
@@ -131,13 +151,25 @@ private struct TaskList: View {
     }
 }
 
-/// The "Add a task" field. It takes the keyboard whenever the panel opens.
-private struct Composer: View {
+/// The field for a new task. It takes the keyboard whenever the panel opens.
+struct Composer: View {
+    /// A second place the typed task can go.
+    struct Alternate {
+        let title: String
+        let help: String
+        let action: () -> Void
+    }
+
     @ObservedObject var model: AppModel
+    let placeholder: String
+    @Binding var text: String
+    let onAdd: () -> Void
+    var alternate: Alternate?
+
     @FocusState private var focused: Bool
 
     private var hasText: Bool {
-        !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -148,29 +180,41 @@ private struct Composer: View {
                 .accessibilityHidden(true)
 
             ZStack(alignment: .leading) {
-                if model.draft.isEmpty {
-                    Text("Add a task")
+                if text.isEmpty {
+                    Text(placeholder)
                         .font(Face.text(14))
                         .foregroundStyle(Sky.haze.opacity(0.8))
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
-                TextField("", text: $model.draft)
+                TextField("", text: $text)
                     .textFieldStyle(.plain)
                     .font(Face.text(14))
                     .foregroundStyle(Sky.moonlight)
                     .tint(Sky.starlight)
                     .focused($focused)
-                    .accessibilityLabel("Add a task")
+                    .accessibilityLabel(placeholder)
                     .onSubmit(add)
             }
 
             if hasText {
-                Button("Add", action: add)
-                    .buttonStyle(.plain)
-                    .font(Face.text(12.5, .demi))
-                    .foregroundStyle(Sky.starlight)
-                    .transition(.opacity)
+                HStack(spacing: 13) {
+                    if let alternate {
+                        Button(alternate.title) {
+                            alternate.action()
+                            takeFocus()
+                        }
+                        .buttonStyle(.plain)
+                        .font(Face.text(12.5, .medium))
+                        .foregroundStyle(Sky.haze)
+                        .help(alternate.help)
+                    }
+                    Button("Add", action: add)
+                        .buttonStyle(.plain)
+                        .font(Face.text(12.5, .demi))
+                        .foregroundStyle(Sky.starlight)
+                }
+                .transition(.opacity)
             }
         }
         .padding(.horizontal, 12)
@@ -194,7 +238,7 @@ private struct Composer: View {
     }
 
     private func add() {
-        model.addDraft()
+        onAdd()
         takeFocus()
     }
 

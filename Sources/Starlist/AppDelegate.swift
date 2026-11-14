@@ -268,6 +268,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 NSApp.terminate(nil)
             case "w":
                 hidePanel()
+            case "\r":
+                guard model.screen == .list else { return false }
+                model.addDraftToLater()
             case "x":
                 NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: self)
             case "c":

@@ -8,6 +8,7 @@ import Foundation
 public final class AppModel: ObservableObject {
     public enum Screen: Equatable {
         case list
+        case later
         case history
         case notion
     }
@@ -24,6 +25,9 @@ public final class AppModel: ObservableObject {
     }
 
     public let store: TaskStore
+    /// Things for another day. They are not part of today's list: no star,
+    /// no red dot, and Archive leaves them alone.
+    public let later: TaskStore
     public let archive: ArchiveStore
     public let stars: StarLog
     public let notion: NotionSync
@@ -32,6 +36,7 @@ public final class AppModel: ObservableObject {
     @Published public var screen: Screen = .list
     @Published public var today = Date()
     @Published public var draft = ""
+    @Published public var laterDraft = ""
     @Published public var editingID: UUID?
     @Published public var expandedArchive: URL?
     @Published public private(set) var banner: Banner?
@@ -70,6 +75,7 @@ public final class AppModel: ObservableObject {
         let settings = SettingsStore(fileURL: data.appendingPathComponent("settings.json"))
         self.settings = settings
         store = TaskStore(fileURL: data.appendingPathComponent("tasks.json"))
+        later = TaskStore(fileURL: data.appendingPathComponent("later.json"))
         stars = StarLog(fileURL: data.appendingPathComponent("stars.json"))
         let folder = settings.value.archiveFolderPath
             .map { URL(fileURLWithPath: $0, isDirectory: true) } ?? paths.defaultArchiveFolder
@@ -86,7 +92,7 @@ public final class AppModel: ObservableObject {
 
         // Views observe this one object; pass along changes from the parts.
         let parts: [ObservableObjectPublisher] = [
-            store.objectWillChange, archive.objectWillChange,
+            store.objectWillChange, later.objectWillChange, archive.objectWillChange,
             stars.objectWillChange, notion.objectWillChange,
         ]
         for part in parts {
@@ -103,7 +109,7 @@ public final class AppModel: ObservableObject {
         today = Date()
         editingID = nil
         screen = requested ?? (resumesNotionSetup ? .notion : .list)
-        if screen == .list { focusComposer() }
+        if screen == .list || screen == .later { focusComposer() }
         // Anything still waiting for Notion (offline earlier, app quit) goes now.
         Task { await sendToNotion(announcing: false) }
     }
@@ -150,7 +156,9 @@ public final class AppModel: ObservableObject {
     }
 
     public func finishEditing(_ id: UUID, title: String) {
+        // The task is on one list or the other; renaming is a no-op on the wrong one.
         store.rename(id, to: title)
+        later.rename(id, to: title)
         if editingID == id { editingID = nil }
         focusComposer()
     }
@@ -158,6 +166,39 @@ public final class AppModel: ObservableObject {
     public func cancelEditing() {
         editingID = nil
         focusComposer()
+    }
+
+    // MARK: Later
+
+    public func showLater() {
+        editingID = nil
+        screen = .later
+        focusComposer()
+    }
+
+    public func addLaterDraft() {
+        guard later.add(laterDraft) != nil else { return }
+        laterDraft = ""
+    }
+
+    /// Sends what is typed in today's field straight to the Later list.
+    public func addDraftToLater() {
+        guard later.add(draft) != nil else { return }
+        draft = ""
+    }
+
+    /// Puts an unfinished task off. Like deleting, this never earns the day's star.
+    public func moveToLater(_ id: UUID) {
+        guard let item = store.items.first(where: { $0.id == id }), !item.isDone,
+              let taken = store.take(id) else { return }
+        if editingID == id { editingID = nil }
+        later.insert(taken)
+    }
+
+    public func moveToToday(_ id: UUID) {
+        guard let taken = later.take(id) else { return }
+        if editingID == id { editingID = nil }
+        store.insert(taken)
     }
 
     // MARK: Archive

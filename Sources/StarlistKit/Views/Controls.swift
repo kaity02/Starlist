@@ -4,6 +4,8 @@ import SwiftUI
 struct GhostButton: View {
     let title: String
     var accent = false
+    /// A number shown after the title, such as how many tasks are waiting.
+    var count: Int?
     var help: String?
     let action: () -> Void
 
@@ -12,9 +14,19 @@ struct GhostButton: View {
 
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .font(Face.text(12.5, .medium))
-                .foregroundStyle(color)
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text(title)
+                    .font(Face.text(12.5, .medium))
+                    .foregroundStyle(color)
+                if let count {
+                    Text("\(count)")
+                        .font(Face.text(12.5, .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(Sky.starlight.opacity(0.9))
+                        .contentTransition(.numericText())
+                        .animation(.easeOut(duration: 0.25), value: count)
+                }
+            }
                 .padding(.horizontal, 10)
                 .frame(height: 28)
                 .background(
@@ -26,6 +38,7 @@ struct GhostButton: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help(help ?? "")
+        .accessibilityLabel(count.map { "\(title), \($0)" } ?? title)
     }
 
     private var color: Color {
