@@ -6,8 +6,11 @@ A to-do list that lives in the macOS menu bar. Click the shooting star, type a t
 
 - **Add a task.** The field is ready for typing as soon as the panel opens.
 - **Check it off.** Click the circle. It becomes a star, and a small comet crosses the task out.
-- **Archive the list.** "Archive list" saves the whole list as a Markdown file and clears the finished tasks. Unfinished tasks stay on the list (you can turn that off in the "..." menu). A banner offers **Undo** for a few seconds.
-- **History.** Browse archived lists inside the app, open any of them in your Markdown editor, or show them in Finder.
+- **Finish everything.** Checking off the last task sets off a burst of stars and earns the day's star.
+- **See what's left at a glance.** The menu bar icon carries a red dot while any task is unfinished.
+- **Archive the list.** Nothing is archived until you press "Archive list". Then the whole list, finished or not, is saved as a Markdown file and the list is left empty. A banner offers **Undo** for a few seconds.
+- **History.** A calendar with a star on every day you finished your whole list, and below it every archived list, which you can open in your Markdown editor or show in Finder.
+- **Notion (optional).** Each archived list is also added to a page in your Notion workspace.
 
 Also: double-click a task to edit it, hover to delete it, right-click for both. Escape closes the panel. Right-click the menu bar icon for settings and Quit. If the icon is hidden by a crowded menu bar, open Starlist again from Spotlight and the panel appears.
 
@@ -22,12 +25,32 @@ Scripts/build-app.sh --install   # builds, copies to /Applications, launches
 
 To start Starlist when you log in, choose "Open at login" from the "..." menu.
 
+## Connecting Notion
+
+Choose "Connect Notion…" from the "..." menu. You need two things:
+
+1. **An integration secret.** In Notion, go to Settings, Connections, "Develop or manage integrations" (or open <https://www.notion.so/profile/integrations>), create an internal integration with permission to read and insert content, and copy its secret.
+2. **A page shared with that integration.** Open the page you want updated, open the menu at its top right, choose Connections, and add the integration. Then copy the page's link.
+
+Paste both into Starlist and press Connect.
+
+From then on, archiving works like this:
+
+- The Markdown file is saved first, always.
+- When Undo expires (about ten seconds later), the list is added to the Notion page: the date as a heading, a one-line summary, and the tasks as Notion to-dos.
+- Lists go directly under a "Starlist" heading that the app adds to the page the first time. Newest is on top. Move that heading anywhere on the page and new lists follow it; delete it and the app makes a new one.
+- If Notion can't be reached, the list waits in a queue on disk and is sent the next time you open the panel, archive, or launch the app.
+
+The secret is stored in your login keychain, not in a file. After rebuilding the app, macOS may ask once whether the new build can read it.
+
 ## Where things are kept
 
 | What | Where |
 | --- | --- |
 | Current list | `~/Library/Application Support/Starlist/tasks.json` |
+| Stars (days you finished everything) | `~/Library/Application Support/Starlist/stars.json` |
 | Settings | `~/Library/Application Support/Starlist/settings.json` |
+| Lists waiting for Notion | `~/Library/Application Support/Starlist/notion-outbox.json` |
 | Archived lists | `~/Documents/Starlist/` (change it from History, "Change folder…") |
 
 The first time you archive, macOS asks whether Starlist may use your Documents folder.
@@ -44,17 +67,21 @@ Archived at 3:32 PM. 2 of 3 tasks done.
 - [x] Buy oat milk
 - [x] Email Sam
 
-## Carried over
+## Not done
 
 - [ ] Call the dentist
 ```
 
 History reads the folder directly, so moving, editing, or deleting files in Finder is reflected in the app.
 
+### How a day earns its star
+
+A day gets its star the moment you check off the last unfinished task on the list. Un-checking that task takes the star back, so a stray click doesn't count. Deleting tasks never earns one.
+
 ## Project layout
 
 ```
-Sources/StarlistKit/   Model (tasks, settings, Markdown archive), design, SwiftUI views
+Sources/StarlistKit/   Model (tasks, stars, settings, Markdown archive, Notion), design, SwiftUI views
 Sources/Starlist/      The menu bar app: status item, panel, menus
 Sources/StarlistDev/   Build-time helper: icon renderer, snapshots, logic checks
 Resources/Info.plist   Bundle settings (menu bar only, no Dock icon)
@@ -65,17 +92,18 @@ Scripts/build-app.sh   Assembles and signs Starlist.app
 
 ```sh
 swift build
-.build/debug/starlist-dev check              # logic checks: store, Markdown, archive, undo
+.build/debug/starlist-dev check              # logic checks, including Notion against a stand-in server
 .build/debug/starlist-dev snapshot /tmp/out  # PNGs of every screen, the glyph, and the icon
 
 # Run against a throwaway folder instead of your real list:
 build/Starlist.app/Contents/MacOS/Starlist --data-dir /tmp/starlist-test --show
 ```
 
-Two things worth knowing:
+Three things worth knowing:
 
 - The app icon and menu bar glyph are drawn in code (`Design/StarShapes.swift`, `Design/AppIconView.swift`). The build script renders the icon at every size and packs the `.icns`.
 - Views use `@Stored` instead of `@State`. In the macOS 27 SDK `@State` is a compiler macro whose plugin ships only with Xcode; `Stored` is an alias for the same SwiftUI type that builds with the Command Line Tools alone. See `Design/Stored.swift`.
+- Notion requests use API version `2026-03-11` (`Model/Notion.swift`). With `--data-dir`, the secret is kept in a file inside that folder instead of the keychain.
 
 ## License
 

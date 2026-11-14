@@ -22,7 +22,12 @@ public struct RootView: View {
             case .history:
                 HistoryScreen(model: model)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
+            case .notion:
+                NotionScreen(model: model)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
+
+            StarBurstOverlay(trigger: model.celebration)
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.26), value: model.screen)
         .frame(width: PanelMetrics.width, height: PanelMetrics.height)

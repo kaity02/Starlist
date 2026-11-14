@@ -2,7 +2,8 @@
 //
 //   starlist-dev icon <iconset-dir>     Renders the app icon at every size macOS wants.
 //   starlist-dev snapshot <out-dir>     Renders the panel in its main states, plus the glyphs.
-//   starlist-dev check                  Runs the logic checks (store, Markdown, archive, undo).
+//   starlist-dev check                  Runs the logic checks (store, Markdown, archive,
+//                                       stars, and Notion against a stand-in server).
 
 import AppKit
 import StarlistKit
@@ -81,7 +82,8 @@ func snapshot<V: View>(_ view: V, size: CGSize, to url: URL) async throws {
     print("Wrote \(url.lastPathComponent)")
 }
 
-/// The menu bar glyph, large on both menu bar colors and again at true size.
+/// The menu bar glyph on both menu bar colors: large, at true size, and with
+/// the red dot that shows while tasks are unfinished.
 struct GlyphSheet: View {
     var body: some View {
         HStack(spacing: 0) {
@@ -91,28 +93,145 @@ struct GlyphSheet: View {
     }
 
     private func swatch(background: Color, ink: Color) -> some View {
-        VStack(spacing: 18) {
-            glyph(ink: ink).frame(width: 180, height: 180)
-            HStack(spacing: 14) {
-                glyph(ink: ink).frame(width: 18, height: 18)
-                glyph(ink: ink).frame(width: 36, height: 36)
+        VStack(spacing: 22) {
+            glyph(ink: ink, size: 150, badge: true)
+            HStack(spacing: 22) {
+                glyph(ink: ink, size: 18, badge: false)
+                glyph(ink: ink, size: 18, badge: true)
+                glyph(ink: ink, size: 36, badge: true)
             }
         }
         .frame(width: 240, height: 290)
         .background(background)
     }
 
-    private func glyph(ink: Color) -> some View {
-        Canvas { context, size in
+    /// Same placement as the app: a 5.5-point dot whose center is 10 points
+    /// right and 7.2 points up from the middle of an 18-point glyph.
+    private func glyph(ink: Color, size: CGFloat, badge: Bool) -> some View {
+        Canvas { context, canvasSize in
             let geometry = ShootingStarGeometry(
-                in: CGRect(origin: .zero, size: size), separated: true
+                in: CGRect(origin: .zero, size: canvasSize), separated: true
             )
             context.fill(geometry.star, with: .color(ink))
             for trail in geometry.trails {
                 context.fill(trail.path, with: .color(ink))
             }
         }
+        .frame(width: size, height: size)
+        .overlay {
+            if badge {
+                Circle()
+                    .fill(Color(nsColor: .systemRed))
+                    .frame(width: size * 5.5 / 18, height: size * 5.5 / 18)
+                    .offset(x: size * 10 / 18, y: size * -7.2 / 18)
+            }
+        }
+        .padding(size * 0.25)
     }
+}
+
+// MARK: - A stand-in for Notion
+
+/// Answers Notion API requests from memory and records what was asked.
+final class FakeNotion: NotionTransport, @unchecked Sendable {
+    struct Call {
+        let method: String
+        let path: String
+        let headers: [String: String]
+        let body: [String: Any]
+    }
+
+    private let lock = NSLock()
+    private var recorded: [Call] = []
+    private var parents: [String: String] = [:]
+    private var counter = 0
+
+    var isOffline = false
+    var forcedStatus: Int?
+    var deletedBlocks: Set<String> = []
+
+    var calls: [Call] { lock.withLock { recorded } }
+    var appends: [Call] { calls.filter { $0.method == "PATCH" } }
+
+    func move(_ block: String, into parent: String) {
+        lock.withLock { parents[block] = parent }
+    }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let path = request.url?.path ?? ""
+        let body = request.httpBody
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        lock.withLock {
+            recorded.append(Call(
+                method: request.httpMethod ?? "GET",
+                path: path,
+                headers: request.allHTTPHeaderFields ?? [:],
+                body: body
+            ))
+        }
+        if isOffline { throw URLError(.notConnectedToInternet) }
+        if let forcedStatus { return reply(["message": "refused"], status: forcedStatus, for: request) }
+
+        let parts = path.split(separator: "/").map(String.init)   // v1, blocks|pages, id, [children]
+        guard parts.count >= 3 else { return reply(["message": "bad path"], status: 400, for: request) }
+        let id = parts[2]
+
+        if parts[1] == "pages" {
+            return reply([
+                "url": "https://www.notion.so/Work-progress-\(id.replacingOccurrences(of: "-", with: ""))",
+                "properties": ["Name": ["type": "title", "title": [["plain_text": "Work "], ["plain_text": "progress"]]]],
+            ], status: 200, for: request)
+        }
+        if request.httpMethod == "GET" {
+            let parent = lock.withLock { parents[id] }
+            guard let parent, !deletedBlocks.contains(id) else {
+                return reply(["message": "Could not find block"], status: 404, for: request)
+            }
+            return reply(
+                ["id": id, "in_trash": false, "parent": ["type": "page_id", "page_id": parent]],
+                status: 200, for: request
+            )
+        }
+        let children = body["children"] as? [[String: Any]] ?? []
+        let ids: [String] = lock.withLock {
+            children.map { _ in
+                counter += 1
+                let new = "block-\(counter)"
+                parents[new] = id
+                return new
+            }
+        }
+        return reply(["results": ids.map { ["id": $0] }], status: 200, for: request)
+    }
+
+    private func reply(_ json: [String: Any], status: Int, for request: URLRequest) -> (Data, HTTPURLResponse) {
+        let data = (try? JSONSerialization.data(withJSONObject: json)) ?? Data()
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil
+        )!
+        return (data, response)
+    }
+}
+
+/// The plain text and checked state of the blocks in an append request.
+func describe(_ call: FakeNotion.Call) -> [String] {
+    (call.body["children"] as? [[String: Any]] ?? []).map { block in
+        let type = block["type"] as? String ?? "?"
+        let content = block[type] as? [String: Any] ?? [:]
+        let text = (content["rich_text"] as? [[String: Any]] ?? [])
+            .compactMap { ($0["text"] as? [String: Any])?["content"] as? String }
+            .joined()
+        if type == "to_do" {
+            return (content["checked"] as? Bool ?? false ? "[x] " : "[ ] ") + text
+        }
+        return "\(type): \(text)"
+    }
+}
+
+func afterBlock(_ call: FakeNotion.Call) -> String? {
+    guard let position = call.body["position"] as? [String: Any],
+          position["type"] as? String == "after_block" else { return nil }
+    return (position["after_block"] as? [String: Any])?["id"] as? String
 }
 
 // MARK: - Sample data
@@ -128,8 +247,10 @@ func scratchDirectory(_ name: String) throws -> URL {
 }
 
 @MainActor
-func sampleModel(_ name: String, tasks: [(String, Bool)]) throws -> AppModel {
-    let model = AppModel(paths: .contained(in: try scratchDirectory(name)))
+func sampleModel(
+    _ name: String, tasks: [(String, Bool)], transport: NotionTransport = FakeNotion()
+) throws -> AppModel {
+    let model = AppModel(paths: .contained(in: try scratchDirectory(name)), transport: transport)
     for (title, done) in tasks {
         if let item = model.store.add(title), done {
             model.store.toggle(item.id)
@@ -146,6 +267,9 @@ let sampleTasks: [(String, Bool)] = [
     ("Renew passport", false),
     ("Call the dentist", false),
 ]
+
+let samplePage = "https://www.notion.so/team/Work-progress-1429989fe8ac4effbc8f57f56486db54?pvs=4"
+let samplePageID = "1429989f-e8ac-4eff-bc8f-57f56486db54"
 
 @MainActor
 func renderSnapshots(into directory: URL) async throws {
@@ -164,20 +288,21 @@ func renderSnapshots(into directory: URL) async throws {
     await archived.archiveList()
     try await snapshot(RootView(model: archived), size: panel, to: out("3-after-archive.png"))
 
-    // A few days of history to browse.
+    // A few days of history and a few months of stars to browse.
     let history = try sampleModel("history", tasks: sampleTasks)
     let day: TimeInterval = 86_400
-    for (offset, doneCount) in [(3.0, 2), (2.0, 5), (1.0, 3)] {
+    for (offset, doneCount) in [(3.0, 2), (2.0, 6), (1.0, 3)] {
         let items = sampleTasks.enumerated().map { index, task in
             TodoItem(title: task.0, isDone: index < doneCount)
         }
-        _ = try await history.archive.save(
-            items: items, keepsUnfinished: true, at: Date().addingTimeInterval(-offset * day)
-        )
+        _ = try await history.archive.save(items: items, at: Date().addingTimeInterval(-offset * day))
+    }
+    for offset in [0, 1, 2, 3, 6, 7, 9, 10, 13, 14, 15, 20, 22, 23, 27, 28, 29, 30, 34, 37, 41,
+                   42, 43, 48, 50, 55, 56, 57, 62, 64, 69, 70, 71, 77, 83, 84, 90, 97, 104] {
+        history.stars.recordClear(on: Date().addingTimeInterval(-Double(offset) * day))
     }
     history.screen = .history
     await history.archive.refresh()
-    history.expandedArchive = history.archive.lists.first?.id
     try await snapshot(RootView(model: history), size: panel, to: out("4-history.png"))
 
     let noHistory = try sampleModel("no-history", tasks: [])
@@ -195,16 +320,22 @@ func renderSnapshots(into directory: URL) async throws {
     print("Wrote 7-glyph.png")
     try writePNG(try render(AppIconView(size: 512)), to: out("8-icon.png"))
     print("Wrote 8-icon.png")
-    let small = HStack(spacing: 12) {
-        AppIconView(size: 128)
-        AppIconView(size: 64)
-        AppIconView(size: 32)
-        AppIconView(size: 16)
-    }
-    .padding(16)
-    .background(Color(white: 0.9))
-    try writePNG(try render(small, scale: 2), to: out("9-icon-small.png"))
-    print("Wrote 9-icon-small.png")
+
+    let notionSetup = try sampleModel("notion-setup", tasks: [])
+    notionSetup.screen = .notion
+    try await snapshot(RootView(model: notionSetup), size: panel, to: out("9-notion-setup.png"))
+
+    let notionOn = try sampleModel("notion-on", tasks: sampleTasks)
+    try await notionOn.notion.connect(secret: "secret_example", pageLink: samplePage)
+    notionOn.bannerDuration = .milliseconds(20)
+    await notionOn.archiveList()
+    try await Task.sleep(for: .milliseconds(900))
+    notionOn.dismissBanner()
+    notionOn.screen = .notion
+    try await snapshot(RootView(model: notionOn), size: panel, to: out("10-notion-connected.png"))
+
+    try writePNG(try render(StarBurstFrames(), scale: 1), to: out("11-burst.png"))
+    print("Wrote 11-burst.png")
 }
 
 // MARK: - Checks
@@ -230,7 +361,7 @@ func runChecks() async throws {
         let dir = try scratchDirectory("check-store")
         let url = dir.appendingPathComponent("tasks.json")
         let store = TaskStore(fileURL: url)
-        expect(store.items.isEmpty, "starts empty")
+        expect(store.items.isEmpty && !store.isAllDone, "starts empty, and empty is not \"all done\"")
         expect(store.add("   ") == nil, "ignores a blank title")
         let milk = store.add("  Buy oat milk\n")
         expect(milk?.title == "Buy oat milk", "trims the title to one clean line")
@@ -256,6 +387,16 @@ func runChecks() async throws {
         expect(recovered.items.isEmpty && setAside, "an unreadable file is set aside, not overwritten")
     }
 
+    let zone = TimeZone(identifier: "America/Los_Angeles")!
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = zone
+    calendar.locale = Locale(identifier: "en_US")
+    var components = DateComponents()
+    (components.year, components.month, components.day) = (2026, 11, 13)
+    (components.hour, components.minute) = (15, 32)
+    let friday = calendar.date(from: components)!
+    let english = Locale(identifier: "en_US")
+
     print("Markdown")
     do {
         let items = [
@@ -263,16 +404,8 @@ func runChecks() async throws {
             TodoItem(title: "Call the dentist"),
             TodoItem(title: "Email Sam", isDone: true),
         ]
-        var components = DateComponents()
-        (components.year, components.month, components.day) = (2026, 11, 13)
-        (components.hour, components.minute) = (15, 32)
-        let zone = TimeZone(identifier: "America/Los_Angeles")!
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = zone
-        let date = calendar.date(from: components)!
         let text = ArchiveMarkdown.render(
-            items: items, archivedAt: date, keepsUnfinished: true,
-            locale: Locale(identifier: "en_US"), timeZone: zone
+            items: items, archivedAt: friday, locale: english, timeZone: zone
         )
         let expected = """
         # To-do list for Friday, November 13, 2026
@@ -284,7 +417,7 @@ func runChecks() async throws {
         - [x] Buy oat milk
         - [x] Email Sam
 
-        ## Carried over
+        ## Not done
 
         - [ ] Call the dentist
 
@@ -292,13 +425,11 @@ func runChecks() async throws {
         expect(text == expected, "renders the expected file")
         if text != expected { print(text) }
 
-        let dropped = ArchiveMarkdown.render(
-            items: [TodoItem(title: "Only one")], archivedAt: date, keepsUnfinished: false,
-            locale: Locale(identifier: "en_US"), timeZone: zone
+        let single = ArchiveMarkdown.render(
+            items: [TodoItem(title: "Only one")], archivedAt: friday, locale: english, timeZone: zone
         )
-        expect(dropped.contains("0 of 1 task done."), "says \"1 task\", not \"1 tasks\"")
-        expect(dropped.contains("## Not done") && !dropped.contains("## Done"),
-               "labels dropped tasks and leaves out an empty Done section")
+        expect(single.contains("0 of 1 task done."), "says \"1 task\", not \"1 tasks\"")
+        expect(!single.contains("## Done"), "leaves out an empty Done section")
 
         let parsed = ArchiveMarkdown.parseItems(text)
         expect(parsed.map(\.title) == ["Buy oat milk", "Email Sam", "Call the dentist"],
@@ -307,9 +438,9 @@ func runChecks() async throws {
         expect(ArchiveMarkdown.parseItems("# Notes\n- plain bullet\n* [X] Star bullet\n").count == 1,
                "ignores lines that aren't checklist items")
 
-        expect(ArchiveMarkdown.fileName(for: date, attempt: 1, timeZone: zone)
+        expect(ArchiveMarkdown.fileName(for: friday, attempt: 1, timeZone: zone)
                == "2026-11-13 To-do list.md", "names the file by day")
-        expect(ArchiveMarkdown.fileName(for: date, attempt: 3, timeZone: zone)
+        expect(ArchiveMarkdown.fileName(for: friday, attempt: 3, timeZone: zone)
                == "2026-11-13 To-do list 3.md", "numbers later archives from the same day")
         let day = ArchiveMarkdown.day(fromFileName: "2026-11-13 To-do list 3.md", timeZone: zone)
         expect(day.map { calendar.component(.day, from: $0) } == 13, "reads the day from a file name")
@@ -323,15 +454,14 @@ func runChecks() async throws {
         await model.archiveList()
         let files = (try? fm.contentsOfDirectory(atPath: folder.path)) ?? []
         expect(files.count == 1 && files[0].hasSuffix("To-do list.md"), "writes one Markdown file")
-        expect(model.store.items.count == 4 && model.store.doneCount == 0,
-               "finished tasks leave the list, unfinished ones stay")
+        expect(model.store.items.isEmpty, "archiving leaves the list empty, unfinished tasks included")
         if case let .archived(count, _) = model.banner {
             expect(count == 6, "confirms how many tasks were saved")
         } else {
             expect(false, "confirms how many tasks were saved")
         }
         expect(model.archive.lists.first?.items.count == 6 && model.archive.lists.first?.doneCount == 2,
-               "History shows the archived list")
+               "History shows all six tasks, two of them done")
 
         model.store.add("Added after archiving")
         await model.undoArchive()
@@ -342,21 +472,19 @@ func runChecks() async throws {
         expect(model.banner == nil && model.archive.lists.isEmpty, "undo clears the banner and History")
 
         await model.archiveList()
+        model.store.add("A new day's task")
         await model.archiveList()
         let names = (try? fm.contentsOfDirectory(atPath: folder.path)) ?? []
         expect(names.count == 2 && names.contains { $0.hasSuffix("To-do list 2.md") },
                "a second archive the same day gets its own file")
         expect(model.archive.lists.count == 2, "History lists both")
-
-        model.keepsUnfinished = false
         await model.archiveList()
-        expect(model.store.items.isEmpty, "with carry-over off, archiving clears the whole list")
-        await model.archiveList()
-        expect(((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).count == 3,
+        expect(((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).count == 2,
                "archiving an empty list writes nothing")
 
-        let relaunched = AppModel(paths: .contained(in: folder.deletingLastPathComponent()))
-        expect(relaunched.keepsUnfinished == false, "the carry-over setting is remembered")
+        let relaunched = AppModel(
+            paths: .contained(in: folder.deletingLastPathComponent()), transport: FakeNotion()
+        )
         expect(relaunched.isFirstLaunch == false, "only the first launch counts as first")
     }
 
@@ -375,10 +503,251 @@ func runChecks() async throws {
             expect(false, "a failed save is reported")
         }
     }
+
+    print("Stars")
+    do {
+        let model = try sampleModel("check-stars", tasks: [])
+        let a = model.store.add("First")!
+        let b = model.store.add("Second")!
+        model.toggle(a.id)
+        expect(model.stars.total == 0 && model.celebration == 0, "one of two done earns nothing yet")
+        model.toggle(b.id)
+        expect(model.stars.hasStar(on: Date()) && model.celebration == 1,
+               "checking off the last task earns today's star and the celebration")
+        model.toggle(b.id)
+        expect(model.stars.total == 0, "un-checking it takes the star back")
+        model.toggle(b.id)
+        expect(model.stars.total == 1 && model.celebration == 2, "finishing again earns it again")
+
+        let c = model.store.add("Third")!
+        model.toggle(a.id)
+        expect(model.stars.total == 1, "un-checking when the list wasn't clear leaves the star alone")
+        model.store.remove(a.id)
+        model.store.remove(c.id)
+        expect(model.celebration == 2, "deleting unfinished tasks is not a celebration")
+
+        let reloaded = StarLog(fileURL: model.store.fileURL.deletingLastPathComponent()
+            .appendingPathComponent("stars.json"))
+        expect(reloaded.total == 1, "stars survive a relaunch")
+
+        let log = StarLog(
+            fileURL: try scratchDirectory("check-streak").appendingPathComponent("stars.json"),
+            calendar: calendar
+        )
+        func daysAgo(_ n: Int) -> Date { calendar.date(byAdding: .day, value: -n, to: friday)! }
+        log.recordClear(on: daysAgo(1))
+        log.recordClear(on: daysAgo(2))
+        log.recordClear(on: daysAgo(4))
+        expect(log.currentStreak(asOf: friday) == 2, "a streak ending yesterday is still alive today")
+        log.recordClear(on: friday)
+        expect(log.currentStreak(asOf: friday) == 3, "today's star extends it")
+        expect(log.currentStreak(asOf: daysAgo(-2)) == 0, "a missed day ends it")
+        expect(log.total == 4, "counts starred days")
+
+        let grid = StarCalendar(today: friday, weeks: 18, calendar: calendar)
+        let weekdayIndex = (calendar.component(.weekday, from: friday) - calendar.firstWeekday + 7) % 7
+        expect(grid.date(week: 17, day: weekdayIndex).map { calendar.isDate($0, inSameDayAs: friday) } == true,
+               "the calendar's last column holds today")
+        expect(grid.date(week: 17, day: weekdayIndex + 1) == nil, "days that haven't happened are blank")
+        expect(grid.date(week: 0, day: 0).map { calendar.dateComponents([.day], from: $0, to: friday).day } == 17 * 7 + weekdayIndex,
+               "the first column starts seventeen weeks before this week")
+        expect(grid.monthLabels.map(\.text).suffix(3) == ["Sep", "Oct", "Nov"], "months are labeled")
+        expect(grid.weekdaySymbol(row: 1) == "Mon" && grid.weekdaySymbol(row: 5) == "Fri",
+               "weekdays are labeled")
+    }
+
+    print("Notion links")
+    do {
+        expect(NotionLink.pageID(from: samplePage) == samplePageID, "reads the ID from a page link")
+        expect(NotionLink.pageID(from: " \(samplePageID) ") == samplePageID, "accepts a bare ID")
+        expect(NotionLink.pageID(from:
+            "https://www.notion.so/team/Tasks-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?p=1429989fe8ac4effbc8f57f56486db54&pm=s")
+            == samplePageID, "prefers the previewed page inside a database link")
+        expect(NotionLink.pageID(from: "https://www.notion.so/team/Decaf-cafe-1429989fe8ac4effbc8f57f56486db54")
+            == samplePageID, "is not confused by hex-looking words in the title")
+        expect(NotionLink.pageID(from: "https://example.com/nothing-here") == nil, "rejects other links")
+    }
+
+    print("Notion sync")
+    do {
+        let notionServer = FakeNotion()
+        let model = try sampleModel("check-notion", tasks: sampleTasks, transport: notionServer)
+        model.bannerDuration = .milliseconds(60)
+
+        await model.archiveList()
+        expect(model.notion.pending.isEmpty, "nothing is queued while Notion isn't connected")
+        try await Task.sleep(for: .milliseconds(100))
+
+        // Setting up means leaving the panel to copy things from Notion.
+        model.panelWillAppear(showing: .notion)
+        model.panelDidClose()
+        model.panelWillAppear()
+        expect(model.screen == .notion, "reopening the panel during Notion setup returns to the form")
+        model.notionSecretDraft = "secret_abc"
+        model.setupResumeWindow = 0
+        model.panelDidClose()
+        model.panelWillAppear()
+        expect(model.screen == .notion && model.notionSecretDraft == "secret_abc",
+               "a pasted secret is still there after the panel closes and reopens")
+        model.showList()
+        model.panelDidClose()
+        model.panelWillAppear()
+        expect(model.screen == .list && model.notionSecretDraft == "secret_abc",
+               "going back to the list stays on the list, and keeps what was pasted")
+        model.notionSecretDraft = ""
+        model.panelWillAppear(showing: .notion)
+        model.panelDidClose()
+        model.panelWillAppear()
+        expect(model.screen == .list, "an untouched setup form is not reopened long afterwards")
+        model.setupResumeWindow = 30 * 60
+
+        do {
+            try await model.notion.connect(secret: "  secret_abc\n", pageLink: "not a link")
+            expect(false, "rejects a bad page link")
+        } catch {
+            expect(error as? NotionError == .badLink, "rejects a bad page link")
+        }
+        try await model.notion.connect(secret: "  secret_abc\n", pageLink: samplePage)
+        expect(model.notion.link?.pageTitle == "Work progress" && model.notion.link?.pageID == samplePageID,
+               "connecting reads the page's title")
+        model.panelWillAppear(showing: .notion)
+        model.panelDidClose()
+        model.panelWillAppear()
+        expect(model.screen == .list, "once connected, the panel opens on the list again")
+        let first = notionServer.calls.last!
+        expect(first.headers["Authorization"] == "Bearer secret_abc"
+               && first.headers["Notion-Version"] == "2026-03-11",
+               "sends the trimmed secret and the API version")
+
+        for (title, done) in sampleTasks.prefix(3) {
+            if let item = model.store.add(title), done { model.store.toggle(item.id) }
+        }
+        await model.archiveList()
+        expect(model.notion.pending.count == 1, "an archived list is queued for Notion")
+        expect(await model.notion.flush() == .nothingToSend && notionServer.appends.isEmpty,
+               "it is held back while Undo is still possible")
+        try await Task.sleep(for: .milliseconds(900))
+        expect(model.notion.pending.isEmpty, "once Undo expires it is sent")
+        expect(model.banner == .notice("Added to your Notion page"), "and the banner says so")
+
+        let appends = notionServer.appends
+        expect(appends.count == 2 && appends[0].path == "/v1/blocks/\(samplePageID)/children"
+               && describe(appends[0]) == ["heading_2: Starlist"] && afterBlock(appends[0]) == nil,
+               "the first time, a Starlist heading is added at the end of the page")
+        let anchor = model.notion.link?.anchorBlockID
+        expect(anchor == "block-1" && afterBlock(appends[1]) == anchor,
+               "the list goes directly under that heading")
+        let blocks = describe(appends[1])
+        expect(blocks.count == 5 && blocks[0].hasPrefix("heading_3: ")
+               && blocks[1].hasPrefix("paragraph: 2 of 3 tasks done. Archived at "),
+               "it starts with the date and a summary")
+        expect(Array(blocks.suffix(3)) == [
+            "[x] Send the invoice to the studio", "[x] Water the fig tree",
+            "[ ] Book flights for the conference",
+        ], "then the tasks as to-dos, finished ones checked")
+        expect(model.notion.link?.lastAddedAt != nil, "remembers when it last added something")
+
+        // Undo before the hold expires.
+        model.store.add("Changed my mind")
+        await model.archiveList()
+        await model.undoArchive()
+        try await Task.sleep(for: .milliseconds(900))
+        expect(model.notion.pending.isEmpty && notionServer.appends.count == 2,
+               "an undone archive never reaches Notion")
+        model.store.replaceAll([])
+
+        // Offline, then back.
+        notionServer.isOffline = true
+        model.store.add("Written on a plane")
+        await model.archiveList()
+        try await Task.sleep(for: .milliseconds(900))
+        expect(model.notion.pending.count == 1 && model.notion.lastError == .unreachable,
+               "offline, the list stays queued")
+        if case let .failure(message, action) = model.banner {
+            expect(message.contains("try again") && action == nil, "and the banner says it will retry")
+        } else {
+            expect(false, "and the banner says it will retry")
+        }
+        let relaunched = AppModel(
+            paths: .contained(in: model.store.fileURL.deletingLastPathComponent()),
+            transport: notionServer
+        )
+        expect(relaunched.notion.pending.count == 1 && relaunched.notion.link?.anchorBlockID == anchor,
+               "the queue and the connection survive a relaunch")
+        notionServer.isOffline = false
+        await model.sendToNotion(announcing: false)
+        expect(model.notion.pending.isEmpty && model.notion.lastError == nil,
+               "back online, the next attempt sends it")
+        expect(afterBlock(notionServer.appends.last!) == anchor,
+               "newer lists are inserted above older ones, under the same heading")
+
+        // The heading was moved into another block.
+        notionServer.move("block-1", into: "toggle-9")
+        model.store.add("After moving the heading")
+        await model.archiveList()
+        try await Task.sleep(for: .milliseconds(900))
+        expect(notionServer.appends.last!.path == "/v1/blocks/toggle-9/children",
+               "if the heading is moved, lists follow it")
+
+        // The heading was deleted.
+        notionServer.deletedBlocks.insert("block-1")
+        model.store.add("After deleting the heading")
+        await model.archiveList()
+        try await Task.sleep(for: .milliseconds(900))
+        let recent = notionServer.appends.suffix(2)
+        expect(describe(recent.first!) == ["heading_2: Starlist"]
+               && model.notion.link?.anchorBlockID != anchor
+               && afterBlock(recent.last!) == model.notion.link?.anchorBlockID,
+               "if the heading is deleted, a new one is made")
+
+        // A secret that stopped working.
+        notionServer.forcedStatus = 401
+        model.store.add("With a revoked secret")
+        await model.archiveList()
+        try await Task.sleep(for: .milliseconds(900))
+        expect(model.notion.pending.count == 1 && model.notion.lastError == .unauthorized,
+               "a rejected secret keeps the list queued")
+        if case let .failure(_, action) = model.banner {
+            expect(action == .notionSettings, "and the banner offers to fix the connection")
+        } else {
+            expect(false, "and the banner offers to fix the connection")
+        }
+        notionServer.forcedStatus = nil
+        await model.sendToNotion(announcing: false)
+
+        // More tasks than fit in one request.
+        let before = notionServer.appends.count
+        for index in 1...150 { model.store.add("Task \(index)") }
+        await model.archiveList()
+        try await Task.sleep(for: .milliseconds(1100))
+        let chunks = Array(notionServer.appends.dropFirst(before))
+        expect(chunks.count == 2 && describe(chunks[0]).count == 100 && describe(chunks[1]).count == 52,
+               "a long list is split into requests of at most 100 blocks")
+        expect(afterBlock(chunks[1]) != nil && afterBlock(chunks[1]) != afterBlock(chunks[0]),
+               "and the second part continues after the first")
+
+        model.notion.disconnect()
+        expect(!model.notion.isConnected && model.notion.pending.isEmpty, "disconnecting forgets everything")
+        let secretFile = model.store.fileURL.deletingLastPathComponent().appendingPathComponent("notion-secret")
+        expect(!fm.fileExists(atPath: secretFile.path), "including the secret")
+    }
+
+    print("Notion entry")
+    do {
+        let entry = NotionEntry(
+            id: UUID(), archivedAt: friday, sendAfter: friday,
+            items: [.init(title: String(repeating: "x", count: 2500), isDone: false)]
+        )
+        let blocks = entry.blocks(locale: english, timeZone: zone)
+        expect(blocks[0] == .heading3("Friday, November 13, 2026"), "is headed by the day")
+        expect(blocks[1] == .paragraph("0 of 1 task done. Archived at 3:32 PM."), "summarizes the list")
+    }
 }
 
 // MARK: - Entry point
 
+// Unbuffered, so output isn't lost if a check crashes.
+setvbuf(stdout, nil, _IONBF, 0)
 _ = NSApplication.shared
 let arguments = Array(CommandLine.arguments.dropFirst())
 

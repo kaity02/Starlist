@@ -30,10 +30,14 @@ public struct AppPaths: Sendable {
     public var dataDirectory: URL
     /// Where archived lists go until the user picks another folder.
     public var defaultArchiveFolder: URL
+    /// The Notion secret goes in the login keychain, except in contained runs,
+    /// which keep it in a file inside their own folder.
+    public var keepsSecretInKeychain: Bool
 
-    public init(dataDirectory: URL, defaultArchiveFolder: URL) {
+    public init(dataDirectory: URL, defaultArchiveFolder: URL, keepsSecretInKeychain: Bool) {
         self.dataDirectory = dataDirectory
         self.defaultArchiveFolder = defaultArchiveFolder
+        self.keepsSecretInKeychain = keepsSecretInKeychain
     }
 
     public static var standard: AppPaths {
@@ -42,7 +46,8 @@ public struct AppPaths: Sendable {
         let documents = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return AppPaths(
             dataDirectory: support.appendingPathComponent("Starlist", isDirectory: true),
-            defaultArchiveFolder: documents.appendingPathComponent("Starlist", isDirectory: true)
+            defaultArchiveFolder: documents.appendingPathComponent("Starlist", isDirectory: true),
+            keepsSecretInKeychain: true
         )
     }
 
@@ -50,7 +55,8 @@ public struct AppPaths: Sendable {
     public static func contained(in directory: URL) -> AppPaths {
         AppPaths(
             dataDirectory: directory,
-            defaultArchiveFolder: directory.appendingPathComponent("Archive", isDirectory: true)
+            defaultArchiveFolder: directory.appendingPathComponent("Archive", isDirectory: true),
+            keepsSecretInKeychain: false
         )
     }
 }

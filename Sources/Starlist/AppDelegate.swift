@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import ServiceManagement
 import StarlistKit
 import SwiftUI
@@ -17,6 +18,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var panel: SkyPanel!
     private var keyMonitor: Any?
     private var outsideClickMonitor: Any?
+    /// The red dot on the menu bar icon while tasks are still unfinished.
+    private let badge = NSView()
+    private var cancellables: Set<AnyCancellable> = []
 
     /// When the panel last closed by itself (focus moved elsewhere).
     private var lastAutoClose = Date.distantPast
@@ -45,6 +49,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             DispatchQueue.main.async { self?.chooseArchiveFolder() }
         }
 
+        // Lists archived while offline, or just before quitting, go to Notion now.
+        Task { await model.sendToNotion(announcing: false) }
+
         if model.isFirstLaunch || CommandLine.arguments.contains("--show") {
             // Give the menu bar a moment to place the icon, then introduce the panel.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -63,7 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: Status item
 
     private func setUpStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        // A little wider than square, so the red dot has room beside the star.
+        statusItem = NSStatusBar.system.statusItem(withLength: 28)
         statusItem.autosaveName = "StarlistStatusItem"
         guard let button = statusItem.button else { return }
         button.image = StatusGlyph.image()
@@ -73,6 +81,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         button.target = self
         button.action = #selector(statusItemClicked(_:))
         button.sendAction(on: [.leftMouseDown, .rightMouseUp])
+
+        // The glyph stays a template image, so macOS keeps tinting it for the
+        // menu bar. The dot is a separate colored view on top, just off the
+        // star's leading point.
+        let diameter: CGFloat = 5.5
+        badge.wantsLayer = true
+        badge.layer?.backgroundColor = NSColor.systemRed.cgColor
+        badge.layer?.cornerRadius = diameter / 2
+        badge.isHidden = true
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        button.addSubview(badge)
+        NSLayoutConstraint.activate([
+            badge.widthAnchor.constraint(equalToConstant: diameter),
+            badge.heightAnchor.constraint(equalToConstant: diameter),
+            badge.centerXAnchor.constraint(equalTo: button.centerXAnchor, constant: 10),
+            badge.centerYAnchor.constraint(equalTo: button.centerYAnchor, constant: -7.2),
+        ])
+
+        model.store.$items
+            .sink { [weak self] items in self?.updateBadge(for: items) }
+            .store(in: &cancellables)
+    }
+
+    private func updateBadge(for items: [TodoItem]) {
+        let left = items.filter { !$0.isDone }.count
+        badge.isHidden = left == 0
+        let description: String
+        switch left {
+        case 0: description = "Starlist"
+        case 1: description = "Starlist, 1 task left"
+        default: description = "Starlist, \(left) tasks left"
+        }
+        statusItem.button?.toolTip = description
+        statusItem.button?.setAccessibilityLabel(description)
     }
 
     @objc private func statusItemClicked(_ sender: Any?) {
@@ -125,7 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.contentView = host
     }
 
-    private func showPanel(showing screen: AppModel.Screen = .list) {
+    private func showPanel(showing screen: AppModel.Screen? = nil) {
         model.panelWillAppear(showing: screen)
         panel.setFrameOrigin(panelOrigin())
         // No fade: the panel must never depend on an animation finishing to be visible.
@@ -147,6 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard panel.isVisible else { return }
         panel.orderOut(nil)
         statusItem.button?.highlight(false)
+        model.panelDidClose()
     }
 
     /// The panel closed because attention moved somewhere else.
@@ -266,13 +309,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             add("Open Starlist", #selector(openFromMenu))
             menu.addItem(.separator())
         }
-        add("Keep unfinished tasks when archiving", #selector(toggleKeepsUnfinished),
-            checked: model.keepsUnfinished)
         add("Open at login", #selector(toggleOpenAtLogin),
             checked: SMAppService.mainApp.status == .enabled)
         menu.addItem(.separator())
         add("Show archive folder", #selector(showArchiveFolder))
         add("Change archive folder…", #selector(changeArchiveFolder))
+        add(model.notion.isConnected ? "Notion settings…" : "Connect Notion…",
+            #selector(openNotion))
         menu.addItem(.separator())
         add("Quit Starlist", #selector(quit), key: "q")
         return menu
@@ -299,8 +342,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.async { [weak self] in self?.showPanel() }
     }
 
-    @objc private func toggleKeepsUnfinished() {
-        model.keepsUnfinished.toggle()
+    @objc private func openNotion() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if self.panel.isVisible {
+                self.model.showNotion()
+            } else {
+                self.showPanel(showing: .notion)
+            }
+        }
     }
 
     @objc private func toggleOpenAtLogin() {

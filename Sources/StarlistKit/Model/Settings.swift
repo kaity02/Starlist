@@ -1,18 +1,41 @@
 import Foundation
 
+/// The Notion page that archived lists are added to.
+public struct NotionLink: Codable, Equatable, Sendable {
+    public var pageID: String
+    public var pageTitle: String
+    public var pageURL: String?
+    /// The "Starlist" heading on the page. New lists are inserted right under it.
+    public var anchorBlockID: String?
+    public var lastAddedAt: Date?
+
+    public init(
+        pageID: String,
+        pageTitle: String,
+        pageURL: String? = nil,
+        anchorBlockID: String? = nil,
+        lastAddedAt: Date? = nil
+    ) {
+        self.pageID = pageID
+        self.pageTitle = pageTitle
+        self.pageURL = pageURL
+        self.anchorBlockID = anchorBlockID
+        self.lastAddedAt = lastAddedAt
+    }
+}
+
 public struct Settings: Codable, Equatable, Sendable {
-    /// When archiving, unfinished tasks stay on the list instead of leaving with the rest.
-    public var keepsUnfinishedOnArchive = true
     /// Nil means the default archive folder.
     public var archiveFolderPath: String?
+    /// Nil until Notion is connected. The secret itself lives in the Keychain, not here.
+    public var notion: NotionLink?
 
     public init() {}
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        keepsUnfinishedOnArchive =
-            try container.decodeIfPresent(Bool.self, forKey: .keepsUnfinishedOnArchive) ?? true
         archiveFolderPath = try container.decodeIfPresent(String.self, forKey: .archiveFolderPath)
+        notion = try container.decodeIfPresent(NotionLink.self, forKey: .notion)
     }
 }
 

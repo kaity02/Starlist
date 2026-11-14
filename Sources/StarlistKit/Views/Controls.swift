@@ -114,7 +114,22 @@ struct BannerView: View {
                     Task { await model.undoArchive() }
                 }
 
-            case let .failure(message, offersFolderChoice):
+            case let .notice(text):
+                StarShape()
+                    .fill(Sky.starlight)
+                    .frame(width: 13, height: 13)
+                    .padding(.trailing, 4)
+                    .accessibilityHidden(true)
+                Text(text)
+                    .font(Face.text(12.5, .medium))
+                    .foregroundStyle(Sky.moonlight)
+                    .lineLimit(1)
+                Spacer(minLength: 2)
+                IconButton(systemName: "xmark", label: "Dismiss", size: 24, symbolSize: 9) {
+                    model.dismissBanner()
+                }
+
+            case let .failure(message, action):
                 Text(message)
                     .font(Face.text(12.5))
                     .foregroundStyle(Sky.ember)
@@ -122,11 +137,17 @@ struct BannerView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 8)
                 Spacer(minLength: 2)
-                if offersFolderChoice {
+                switch action {
+                case .chooseFolder:
                     GhostButton(title: "Choose folder", accent: true) {
                         model.onChooseArchiveFolder()
                     }
-                } else {
+                case .notionSettings:
+                    GhostButton(title: "Fix", accent: true, help: "Open the Notion connection") {
+                        model.dismissBanner()
+                        model.showNotion()
+                    }
+                case nil:
                     IconButton(systemName: "xmark", label: "Dismiss", size: 24, symbolSize: 9) {
                         model.dismissBanner()
                     }
@@ -148,8 +169,83 @@ struct BannerView: View {
 
     private var borderColor: Color {
         switch banner {
-        case .archived: Sky.starlight.opacity(0.35)
+        case .archived, .notice: Sky.starlight.opacity(0.35)
         case .failure: Sky.ember.opacity(0.45)
         }
+    }
+}
+
+/// A single-line field in the panel's style. `isSecret` hides what is typed.
+struct SkyField: View {
+    let placeholder: String
+    @Binding var text: String
+    var isSecret = false
+
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            if text.isEmpty {
+                Text(placeholder)
+                    .font(Face.text(13))
+                    .foregroundStyle(Sky.haze.opacity(0.8))
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+            Group {
+                if isSecret {
+                    SecureField("", text: $text)
+                } else {
+                    TextField("", text: $text)
+                }
+            }
+            .textFieldStyle(.plain)
+            .font(Face.text(13))
+            .foregroundStyle(Sky.moonlight)
+            .tint(Sky.starlight)
+            .focused($focused)
+            .accessibilityLabel(placeholder)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 36)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(focused ? 0.1 : 0.07))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(
+                    focused ? Sky.starlight.opacity(0.55) : Color.white.opacity(0.13),
+                    lineWidth: 1
+                )
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { focused = true }
+    }
+}
+
+/// The one filled button: the main action of a form.
+struct PrimaryButton: View {
+    let title: String
+    let action: () -> Void
+
+    @Stored private var hovering = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(Face.text(13, .demi))
+                .foregroundStyle(Sky.zenith.opacity(isEnabled ? 1 : 0.6))
+                .padding(.horizontal, 16)
+                .frame(height: 32)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(Sky.starlight.opacity(isEnabled ? (hovering ? 1 : 0.92) : 0.35))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
