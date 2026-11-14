@@ -44,21 +44,22 @@ struct TaskRow: View {
     let item: TodoItem
     @ObservedObject var model: AppModel
 
-    @Stored private var hovering = false
+    @Stored private var hovering: Bool
     @Stored private var strike: Double
-    @Stored private var editText = ""
-    @FocusState private var editFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let fontSize: CGFloat = 14
 
-    init(item: TodoItem, model: AppModel) {
+    /// `showsActions` starts the row in its hovered state, for the snapshot tool.
+    init(item: TodoItem, model: AppModel, showsActions: Bool = false) {
         self.item = item
         self.model = model
+        _hovering = Stored(initialValue: showsActions)
         _strike = Stored(initialValue: item.isDone ? 1 : 0)
     }
 
     private var isEditing: Bool { model.editingID == item.id }
+    private var showsActions: Bool { hovering && !isEditing }
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
@@ -68,23 +69,38 @@ struct TaskRow: View {
             .padding(.top, -2)
 
             if isEditing {
-                editor
+                TitleEditor(item: item, model: model, fontSize: fontSize)
             } else {
                 title
             }
 
-            IconButton(
-                systemName: "xmark",
-                label: "Delete task",
-                hoverColor: Sky.ember,
-                size: 22,
-                symbolSize: 9
-            ) {
-                withAnimation(.easeOut(duration: 0.18)) { model.store.remove(item.id) }
+            HStack(spacing: 0) {
+                // A finished task belongs to today; only open ones can be put off.
+                IconButton(
+                    systemName: "clock",
+                    label: "Do later",
+                    hoverColor: Sky.starlight,
+                    size: 22,
+                    symbolSize: 10.5
+                ) {
+                    withAnimation(.easeOut(duration: 0.18)) { model.moveToLater(item.id) }
+                }
+                .opacity(showsActions && !item.isDone ? 1 : 0)
+                .allowsHitTesting(showsActions && !item.isDone)
+
+                IconButton(
+                    systemName: "xmark",
+                    label: "Delete task",
+                    hoverColor: Sky.ember,
+                    size: 22,
+                    symbolSize: 9
+                ) {
+                    withAnimation(.easeOut(duration: 0.18)) { model.store.remove(item.id) }
+                }
+                .opacity(showsActions ? 1 : 0)
+                .allowsHitTesting(showsActions)
             }
             .padding(.top, -1)
-            .opacity(hovering && !isEditing ? 1 : 0)
-            .allowsHitTesting(hovering && !isEditing)
         }
         .padding(.vertical, 7)
         .padding(.leading, 8)
@@ -99,6 +115,9 @@ struct TaskRow: View {
             Button("Edit") { model.beginEditing(item.id) }
             Button(item.isDone ? "Mark as not done" : "Mark as done") {
                 model.toggle(item.id)
+            }
+            if !item.isDone {
+                Button("Do later") { model.moveToLater(item.id) }
             }
             Divider()
             Button("Delete", role: .destructive) { model.store.remove(item.id) }
@@ -129,25 +148,35 @@ struct TaskRow: View {
             .help("Double-click to edit")
             .accessibilityHidden(true)
     }
+}
 
-    private var editor: some View {
-        TextField("", text: $editText)
+/// The field a task's title turns into while it is being renamed.
+struct TitleEditor: View {
+    let item: TodoItem
+    @ObservedObject var model: AppModel
+    var fontSize: CGFloat = 14
+
+    @Stored private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("", text: $text)
             .textFieldStyle(.plain)
             .font(Face.text(fontSize))
             .foregroundStyle(Sky.moonlight)
             .tint(Sky.starlight)
-            .focused($editFocused)
+            .focused($focused)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityLabel("Edit task")
-            .onSubmit { model.finishEditing(item.id, title: editText) }
+            .onSubmit { model.finishEditing(item.id, title: text) }
             .onAppear {
-                editText = item.title
-                DispatchQueue.main.async { editFocused = true }
+                text = item.title
+                DispatchQueue.main.async { focused = true }
             }
-            .onChange(of: editFocused) { wasFocused, isFocused in
+            .onChange(of: focused) { wasFocused, isFocused in
                 // Clicking away keeps what was typed.
-                if wasFocused && !isFocused && isEditing {
-                    model.finishEditing(item.id, title: editText)
+                if wasFocused && !isFocused && model.editingID == item.id {
+                    model.finishEditing(item.id, title: text)
                 }
             }
     }

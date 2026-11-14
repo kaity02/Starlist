@@ -3,10 +3,14 @@ import SwiftUI
 /// The whole panel: a window of night sky with the list or History in front.
 public struct RootView: View {
     @ObservedObject private var model: AppModel
+    private let highlighted: UUID?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    public init(model: AppModel) {
+    /// `highlighted` draws one task as if the pointer were over it, so the
+    /// snapshot tool can show the buttons that only appear on hover.
+    public init(model: AppModel, highlighted: UUID? = nil) {
         self.model = model
+        self.highlighted = highlighted
     }
 
     public var body: some View {
@@ -17,8 +21,11 @@ public struct RootView: View {
 
             switch model.screen {
             case .list:
-                ListScreen(model: model)
+                ListScreen(model: model, highlighted: highlighted)
                     .transition(.move(edge: .leading).combined(with: .opacity))
+            case .later:
+                LaterScreen(model: model, highlighted: highlighted)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             case .history:
                 HistoryScreen(model: model)
                     .transition(.move(edge: .trailing).combined(with: .opacity))

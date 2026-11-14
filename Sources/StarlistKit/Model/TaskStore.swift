@@ -1,6 +1,7 @@
 import Foundation
 
-/// The current to-do list, saved to disk after every change.
+/// A list of tasks, saved to disk after every change. The app keeps two:
+/// today's list and the Later list.
 @MainActor
 public final class TaskStore: ObservableObject {
     @Published public private(set) var items: [TodoItem] = []
@@ -51,6 +52,20 @@ public final class TaskStore: ObservableObject {
         save()
     }
 
+    /// Takes a task off this list and hands it back, so it can go on another.
+    public func take(_ id: UUID) -> TodoItem? {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return nil }
+        let item = items.remove(at: index)
+        save()
+        return item
+    }
+
+    /// Adds a task that already exists (moved here from another list) at the end.
+    public func insert(_ item: TodoItem) {
+        items.append(item)
+        save()
+    }
+
     public func replaceAll(_ newItems: [TodoItem]) {
         items = newItems
         save()
@@ -84,8 +99,9 @@ public final class TaskStore: ObservableObject {
         } catch {
             // Never overwrite a file we couldn't read: set it aside so it can be recovered.
             let stamp = Int(Date().timeIntervalSince1970)
+            let name = fileURL.deletingPathExtension().lastPathComponent
             let aside = fileURL.deletingLastPathComponent()
-                .appendingPathComponent("tasks.unreadable-\(stamp).json")
+                .appendingPathComponent("\(name).unreadable-\(stamp).json")
             try? fm.moveItem(at: fileURL, to: aside)
             items = []
         }
