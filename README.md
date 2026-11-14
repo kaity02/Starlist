@@ -8,11 +8,12 @@ A to-do list that lives in the macOS menu bar. Click the shooting star, type a t
 - **Check it off.** Click the circle. It becomes a star, and a small comet crosses the task out.
 - **Finish everything.** Checking off the last task sets off a burst of stars and earns the day's star.
 - **See what's left at a glance.** The menu bar icon carries a red dot while any task is unfinished.
+- **Keep things for later.** The Later list holds tasks for another day. They don't count toward today: no red dot, no star, and Archive leaves them alone. Hover a task and click the clock to put it off, or "Do today" to bring it back.
 - **Archive the list.** Nothing is archived until you press "Archive list". Then the whole list, finished or not, is saved as a Markdown file and the list is left empty. A banner offers **Undo** for a few seconds.
 - **History.** A calendar with a star on every day you finished your whole list, and below it every archived list, which you can open in your Markdown editor or show in Finder.
 - **Notion (optional).** Each archived list is also added to a page in your Notion workspace.
 
-Also: double-click a task to edit it, hover to delete it, right-click for both. Escape closes the panel. Right-click the menu bar icon for settings and Quit. If the icon is hidden by a crowded menu bar, open Starlist again from Spotlight and the panel appears.
+Also: double-click a task to edit it, hover to delete it, right-click for both. In today's field, Command-Return sends what you typed to Later instead. Escape closes the panel. Right-click the menu bar icon for settings and Quit. If the icon is hidden by a crowded menu bar, open Starlist again from Spotlight and the panel appears.
 
 ## Build and install
 
@@ -48,6 +49,7 @@ The secret is stored in your login keychain, not in a file. After rebuilding the
 | What | Where |
 | --- | --- |
 | Current list | `~/Library/Application Support/Starlist/tasks.json` |
+| Later list | `~/Library/Application Support/Starlist/later.json` |
 | Stars (days you finished everything) | `~/Library/Application Support/Starlist/stars.json` |
 | Settings | `~/Library/Application Support/Starlist/settings.json` |
 | Lists waiting for Notion | `~/Library/Application Support/Starlist/notion-outbox.json` |
@@ -76,7 +78,7 @@ History reads the folder directly, so moving, editing, or deleting files in Find
 
 ### How a day earns its star
 
-A day gets its star the moment you check off the last unfinished task on the list. Un-checking that task takes the star back, so a stray click doesn't count. Deleting tasks never earns one.
+A day gets its star the moment you check off the last unfinished task on the list. Un-checking that task takes the star back, so a stray click doesn't count. Deleting tasks, or putting them off until later, never earns one.
 
 ## Project layout
 
@@ -96,6 +98,7 @@ swift build
 .build/debug/starlist-dev snapshot /tmp/out  # PNGs of every screen, the glyph, and the icon
 
 # Run against a throwaway folder instead of your real list:
+.build/debug/starlist-dev sample /tmp/starlist-test   # optional: fill it with sample tasks
 build/Starlist.app/Contents/MacOS/Starlist --data-dir /tmp/starlist-test --show
 ```
 
