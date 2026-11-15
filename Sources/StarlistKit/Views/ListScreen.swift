@@ -9,6 +9,7 @@ struct ListScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             ListHeader(model: model)
+            FocusStrip(timer: model.focus)
 
             Group {
                 if model.store.items.isEmpty {
@@ -79,8 +80,11 @@ private struct ListHeader: View {
                     .font(Face.display(33))
                     .foregroundStyle(Sky.moonlight)
                 Spacer()
-                IconButton(systemName: "ellipsis", label: "Settings") {
-                    model.onShowSettingsMenu()
+                HStack(spacing: 0) {
+                    FocusStartButton(timer: model.focus)
+                    IconButton(systemName: "ellipsis", label: "Settings") {
+                        model.onShowSettingsMenu()
+                    }
                 }
                 .padding(.trailing, -8)
                 .padding(.top, 2)

@@ -192,17 +192,41 @@ struct ShootingStarMark: View {
 
 /// The menu bar icon: a template image, so macOS tints it for light and dark menu bars.
 public enum StatusGlyph {
-    public static func image(pointSize: CGFloat = 18) -> NSImage {
-        let size = NSSize(width: pointSize, height: pointSize)
+    /// - Parameters:
+    ///   - time: The focus timer's time left, drawn to the right of the star.
+    ///     It is part of the image, so it is tinted along with the star and
+    ///     the star stays where it is when the time appears.
+    ///   - dimmed: Draws the time faintly, for a paused timer.
+    public static func image(
+        pointSize: CGFloat = 18, time: String? = nil, dimmed: Bool = false
+    ) -> NSImage {
+        // Digits of equal width, so the time doesn't shiver as it counts down.
+        let font = NSFont.monospacedDigitSystemFont(ofSize: pointSize * 13 / 18, weight: .medium)
+        let label = time.map {
+            NSAttributedString(string: $0, attributes: [
+                .font: font,
+                .foregroundColor: NSColor.black.withAlphaComponent(dimmed ? 0.5 : 1),
+            ])
+        }
+        let gap = pointSize * 4 / 18
+        let labelWidth = label.map { ceil($0.size().width) + gap } ?? 0
+
+        let size = NSSize(width: pointSize + labelWidth, height: pointSize)
         let image = NSImage(size: size, flipped: true) { rect in
             guard let context = NSGraphicsContext.current?.cgContext else { return false }
-            let geometry = ShootingStarGeometry(in: rect, separated: true)
+            let square = CGRect(x: rect.minX, y: rect.minY, width: pointSize, height: pointSize)
+            let geometry = ShootingStarGeometry(in: square, separated: true)
             context.setFillColor(NSColor.black.cgColor)
             context.addPath(geometry.star.cgPath)
             context.fillPath()
             for trail in geometry.trails {
                 context.addPath(trail.path.cgPath)
                 context.fillPath()
+            }
+            if let label {
+                // The digits' middle on the star's middle.
+                let baseline = rect.midY + font.capHeight / 2
+                label.draw(at: CGPoint(x: square.maxX + gap, y: baseline - font.ascender))
             }
             return true
         }

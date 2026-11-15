@@ -31,6 +31,9 @@ public final class AppModel: ObservableObject {
     public let archive: ArchiveStore
     public let stars: StarLog
     public let notion: NotionSync
+    /// The Pomodoro timer. Its changes are not passed along like the other
+    /// parts': it ticks every second, so only the views that show it watch it.
+    public let focus = FocusTimer()
     private let settings: SettingsStore
 
     @Published public var screen: Screen = .list
