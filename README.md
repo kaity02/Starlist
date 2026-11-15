@@ -8,6 +8,7 @@ A to-do list that lives in the macOS menu bar. Click the shooting star, type a t
 - **Check it off.** Click the circle. It becomes a star, and a small comet crosses the task out.
 - **Finish everything.** Checking off the last task sets off a burst of stars and earns the day's star.
 - **See what's left at a glance.** The menu bar icon carries a red dot while any task is unfinished.
+- **Focus with a timer.** Click the timer at the top of the list for 25 minutes of focus, then a 5-minute break. When the break is over, click it again for the next 25 minutes. The time left shows in the menu bar beside the star.
 - **Keep things for later.** The Later list holds tasks for another day. They don't count toward today: no red dot, no star, and Archive leaves them alone. Hover a task and click the clock to put it off, or "Do today" to bring it back.
 - **Archive the list.** Nothing is archived until you press "Archive list". Then the whole list, finished or not, is saved as a Markdown file and the list is left empty. A banner offers **Undo** for a few seconds.
 - **History.** A calendar with a star on every day you finished your whole list, and below it every archived list, which you can open in your Markdown editor or show in Finder.
@@ -43,6 +44,14 @@ From then on, archiving works like this:
 - If Notion can't be reached, the list waits in a queue on disk and is sent the next time you open the panel, archive, or launch the app.
 
 The secret is stored in your login keychain, not in a file. After rebuilding the app, macOS may ask once whether the new build can read it.
+
+## The focus timer
+
+The timer keeps running with the panel closed. When a focus session ends, a notification says so and the break starts by itself. When the break ends, another notification says so and the timer waits: the next session starts when you click the timer again. In the panel, Pause holds the time where it is and Stop clears the timer.
+
+- The first time you start it, macOS asks whether Starlist may send notifications. If you say no, you hear a chime instead.
+- If the Mac is asleep when a session or a break runs out, the timer stops, so it doesn't run on without you.
+- The timer isn't saved. Quitting Starlist ends it.
 
 ## Where things are kept
 
@@ -83,7 +92,7 @@ A day gets its star the moment you check off the last unfinished task on the lis
 ## Project layout
 
 ```
-Sources/StarlistKit/   Model (tasks, stars, settings, Markdown archive, Notion), design, SwiftUI views
+Sources/StarlistKit/   Model (tasks, stars, focus timer, settings, Markdown archive, Notion), design, SwiftUI views
 Sources/Starlist/      The menu bar app: status item, panel, menus
 Sources/StarlistDev/   Build-time helper: icon renderer, snapshots, logic checks
 Resources/Info.plist   Bundle settings (menu bar only, no Dock icon)

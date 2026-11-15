@@ -3,7 +3,8 @@
 //   starlist-dev icon <iconset-dir>     Renders the app icon at every size macOS wants.
 //   starlist-dev snapshot <out-dir>     Renders the panel in its main states, plus the glyphs.
 //   starlist-dev check                  Runs the logic checks (store, Markdown, archive,
-//                                       stars, and Notion against a stand-in server).
+//                                       stars, the focus timer, and Notion against a
+//                                       stand-in server).
 
 import AppKit
 import StarlistKit
@@ -82,8 +83,9 @@ func snapshot<V: View>(_ view: V, size: CGSize, to url: URL) async throws {
     print("Wrote \(url.lastPathComponent)")
 }
 
-/// The menu bar glyph on both menu bar colors: large, at true size, and with
-/// the red dot that shows while tasks are unfinished.
+/// The menu bar glyph on both menu bar colors: large, at true size, with the
+/// red dot that shows while tasks are unfinished, and with the focus timer's
+/// time beside it (running, then paused).
 struct GlyphSheet: View {
     var body: some View {
         HStack(spacing: 0) {
@@ -100,9 +102,28 @@ struct GlyphSheet: View {
                 glyph(ink: ink, size: 18, badge: true)
                 glyph(ink: ink, size: 36, badge: true)
             }
+            HStack(spacing: 18) {
+                timed(ink: ink, size: 18, time: "24:12", dimmed: false)
+                timed(ink: ink, size: 18, time: "4:59", dimmed: true)
+            }
+            timed(ink: ink, size: 36, time: "24:12", dimmed: false)
         }
-        .frame(width: 240, height: 290)
+        .frame(width: 240, height: 400)
         .background(background)
+    }
+
+    /// The icon as the app draws it while the timer is in use, with the dot
+    /// where the app puts it: 19 points in from the image's left edge.
+    private func timed(ink: Color, size: CGFloat, time: String, dimmed: Bool) -> some View {
+        Image(nsImage: StatusGlyph.image(pointSize: size, time: time, dimmed: dimmed))
+            .renderingMode(.template)
+            .foregroundStyle(ink)
+            .overlay(alignment: .topLeading) {
+                Circle()
+                    .fill(Color(nsColor: .systemRed))
+                    .frame(width: size * 5.5 / 18, height: size * 5.5 / 18)
+                    .offset(x: size * (19 - 2.75) / 18, y: size * (9 - 7.2 - 2.75) / 18)
+            }
     }
 
     /// Same placement as the app: a 5.5-point dot whose center is 10 points
@@ -378,6 +399,29 @@ func renderSnapshots(into directory: URL) async throws {
     let laterEmpty = try sampleModel("later-empty", tasks: [])
     laterEmpty.screen = .later
     try await snapshot(RootView(model: laterEmpty), size: panel, to: out("14-later-empty.png"))
+
+    // The focus timer: part way through a session, on a break, and paused.
+    // Each runs on a clock that is wound forward in steps and then stands still.
+    func timing(_ name: String, steps: [TimeInterval]) throws -> AppModel {
+        let model = try sampleModel(name, tasks: Array(sampleTasks.prefix(4)))
+        var now = Date()
+        model.focus.clock = { now }
+        model.focus.start()
+        for step in steps {
+            now += step
+            model.focus.tick()
+        }
+        return model
+    }
+    let focusing = try timing("focus", steps: [9 * 60 + 48])
+    try await snapshot(RootView(model: focusing), size: panel, to: out("15-focus.png"))
+
+    let resting = try timing("break", steps: [FocusTimer.focusLength, 72])
+    try await snapshot(RootView(model: resting), size: panel, to: out("16-break.png"))
+
+    let paused = try timing("paused", steps: [18 * 60 + 5])
+    paused.focus.pause()
+    try await snapshot(RootView(model: paused), size: panel, to: out("17-focus-paused.png"))
 }
 
 // MARK: - Checks
@@ -641,6 +685,98 @@ func runChecks() async throws {
         )
         expect(relaunched.later.items.map(\.title) == ["One day", "Park this"],
                "the Later list survives a relaunch")
+    }
+
+    print("Focus timer")
+    do {
+        var now = friday
+        var ended: [FocusTimer.Phase] = []
+        let timer = FocusTimer()
+        timer.clock = { now }
+        timer.onPhaseEnd = { ended.append($0) }
+        expect(timer.phase == nil && !timer.isPaused, "starts out not in use")
+        timer.tick()
+        timer.pause()
+        timer.resume()
+        expect(timer.phase == nil, "and stays that way until it is started")
+
+        timer.start()
+        expect(timer.phase == .focus && timer.timeText == "25:00" && timer.progress == 0,
+               "starting begins 25 minutes of focus")
+        now += 61
+        timer.tick()
+        expect(timer.timeText == "23:59", "counts down by the clock")
+        now += 11 * 60 + 29
+        timer.tick()
+        expect(timer.timeText == "12:30" && timer.progress == 0.5, "is half way after twelve and a half minutes")
+        now += 12 * 60 + 29
+        timer.tick()
+        expect(timer.phase == .focus && timer.timeText == "0:01" && ended.isEmpty,
+               "is still focus with a second to go")
+        now += 1
+        timer.tick()
+        expect(timer.phase == .rest && timer.timeText == "5:00" && ended == [.focus],
+               "when focus runs out, a 5-minute break begins")
+        now += 5 * 60
+        timer.tick()
+        expect(timer.phase == nil && ended == [.focus, .rest],
+               "when the break runs out, the timer stops and says so")
+        now += 3600
+        timer.tick()
+        expect(timer.phase == nil && ended.count == 2, "and waits to be started again")
+        timer.start()
+        expect(timer.phase == .focus && timer.timeText == "25:00", "the next session is a click away")
+
+        now += 10 * 60
+        timer.tick()
+        timer.pause()
+        now += 3600
+        timer.tick()
+        expect(timer.isPaused && timer.phase == .focus && timer.timeText == "15:00",
+               "a paused timer holds its time, however long it waits")
+        timer.resume()
+        now += 60
+        timer.tick()
+        expect(!timer.isPaused && timer.timeText == "14:00", "and carries on from there")
+
+        // Two seconds late: the Mac was busy, not asleep.
+        now += 14 * 60 + 2
+        timer.tick()
+        expect(timer.phase == .rest && timer.timeText == "5:00",
+               "a break noticed a moment late still gets its full five minutes")
+        // The lid was closed and the break ended an hour ago.
+        now += 5 * 60 + 3600
+        timer.tick()
+        expect(timer.phase == nil && ended == [.focus, .rest, .focus],
+               "sleeping through the end of a break stops the timer, with no alert")
+        timer.start()
+        now += 25 * 60 + 3600
+        timer.tick()
+        expect(timer.phase == nil && ended == [.focus, .rest, .focus],
+               "sleeping through the end of focus stops it too, with no break")
+
+        timer.start()
+        now += 90
+        timer.tick()
+        timer.stop()
+        expect(timer.phase == nil && !timer.isPaused && timer.secondsLeft == 0, "stopping clears it")
+        timer.start()
+        expect(timer.timeText == "25:00", "and the next start is a fresh 25 minutes")
+        timer.pause()
+        timer.start()
+        expect(!timer.isPaused && timer.timeText == "25:00", "starting again un-pauses")
+        timer.stop()
+
+        expect(FocusTimer.clockText(599) == "9:59" && FocusTimer.clockText(5) == "0:05",
+               "shows minutes and two-digit seconds")
+        let alone = StatusGlyph.image()
+        let timed = StatusGlyph.image(time: "24:12")
+        expect(alone.size == NSSize(width: 18, height: 18) && alone.isTemplate,
+               "the menu bar icon is unchanged while the timer is off")
+        expect(timed.size.width > 40 && timed.size.height == 18 && timed.isTemplate,
+               "and grows sideways to fit the time while it is on")
+        expect(StatusGlyph.image(time: "24:12").size == StatusGlyph.image(time: "13:58").size,
+               "without changing width as the digits change")
     }
 
     print("Notion links")

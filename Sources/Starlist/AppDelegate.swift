@@ -20,6 +20,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var outsideClickMonitor: Any?
     /// The red dot on the menu bar icon while tasks are still unfinished.
     private let badge = NSView()
+    private var tasksLeft = 0
+    /// What the focus timer is doing, for the icon's tooltip. Nil when it isn't in use.
+    private var timerNote: String?
+    private var timerInUse = false
+    private let alerts = TimerAlerts()
     private var cancellables: Set<AnyCancellable> = []
 
     /// When the panel last closed by itself (focus moved elsewhere).
@@ -48,6 +53,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.onChooseArchiveFolder = { [weak self] in
             DispatchQueue.main.async { self?.chooseArchiveFolder() }
         }
+        model.focus.onPhaseEnd = { [weak self] phase in
+            self?.alerts.announceEnd(of: phase)
+        }
 
         // Lists archived while offline, or just before quitting, go to Notion now.
         Task { await model.sendToNotion(announcing: false) }
@@ -71,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func setUpStatusItem() {
         // A little wider than square, so the red dot has room beside the star.
+        // It grows to fit the time while the focus timer is in use.
         statusItem = NSStatusBar.system.statusItem(withLength: 28)
         statusItem.autosaveName = "StarlistStatusItem"
         guard let button = statusItem.button else { return }
@@ -84,7 +93,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // The glyph stays a template image, so macOS keeps tinting it for the
         // menu bar. The dot is a separate colored view on top, just off the
-        // star's leading point.
+        // star's leading point. It is placed from the button's left edge,
+        // where the star always is, with or without the time beside it.
         let diameter: CGFloat = 5.5
         badge.wantsLayer = true
         badge.layer?.backgroundColor = NSColor.systemRed.cgColor
@@ -95,26 +105,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSLayoutConstraint.activate([
             badge.widthAnchor.constraint(equalToConstant: diameter),
             badge.heightAnchor.constraint(equalToConstant: diameter),
-            badge.centerXAnchor.constraint(equalTo: button.centerXAnchor, constant: 10),
+            badge.centerXAnchor.constraint(equalTo: button.leadingAnchor, constant: 24),
             badge.centerYAnchor.constraint(equalTo: button.centerYAnchor, constant: -7.2),
         ])
 
         model.store.$items
             .sink { [weak self] items in self?.updateBadge(for: items) }
             .store(in: &cancellables)
+
+        let timer = model.focus
+        timer.$phase.combineLatest(timer.$secondsLeft, timer.$isPaused)
+            .sink { [weak self] phase, secondsLeft, isPaused in
+                self?.updateTimer(phase: phase, secondsLeft: secondsLeft, isPaused: isPaused)
+            }
+            .store(in: &cancellables)
     }
 
     private func updateBadge(for items: [TodoItem]) {
-        let left = items.filter { !$0.isDone }.count
-        badge.isHidden = left == 0
-        let description: String
-        switch left {
+        tasksLeft = items.filter { !$0.isDone }.count
+        badge.isHidden = tasksLeft == 0
+        updateDescription()
+    }
+
+    /// Shows the time left beside the star while the focus timer is in use.
+    private func updateTimer(phase: FocusTimer.Phase?, secondsLeft: Int, isPaused: Bool) {
+        guard let button = statusItem.button else { return }
+        let time = phase.map { _ in FocusTimer.clockText(secondsLeft) }
+        let image = StatusGlyph.image(time: time, dimmed: isPaused)
+        button.image = image
+        // The same five points either side that the star has when it is alone.
+        let length = image.size.width + 10
+        if statusItem.length != length { statusItem.length = length }
+
+        switch phase {
+        case nil: timerNote = nil
+        case _ where isPaused: timerNote = "timer paused"
+        case .focus: timerNote = "focus timer running"
+        case .rest: timerNote = "on a break"
+        }
+        updateDescription()
+
+        // Ask about notifications when the timer is first started, not
+        // 25 minutes later when the first one is due.
+        if phase != nil, !timerInUse { alerts.askPermission() }
+        timerInUse = phase != nil
+    }
+
+    /// The tooltip, and what VoiceOver reads for the menu bar icon.
+    private func updateDescription() {
+        var description: String
+        switch tasksLeft {
         case 0: description = "Starlist"
         case 1: description = "Starlist, 1 task left"
-        default: description = "Starlist, \(left) tasks left"
+        default: description = "Starlist, \(tasksLeft) tasks left"
         }
-        statusItem.button?.toolTip = description
-        statusItem.button?.setAccessibilityLabel(description)
+        if let timerNote { description += ", \(timerNote)" }
+        guard let button = statusItem.button, button.toolTip != description else { return }
+        button.toolTip = description
+        button.setAccessibilityLabel(description)
     }
 
     @objc private func statusItemClicked(_ sender: Any?) {
