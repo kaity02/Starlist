@@ -66,6 +66,15 @@ public final class TaskStore: ObservableObject {
         save()
     }
 
+    /// Moves a task so that it ends up at `index`, counting from the top.
+    public func move(_ id: UUID, to index: Int) {
+        guard let from = items.firstIndex(where: { $0.id == id }) else { return }
+        let target = min(max(index, 0), items.count - 1)
+        guard target != from else { return }
+        items.insert(items.remove(at: from), at: target)
+        save()
+    }
+
     public func replaceAll(_ newItems: [TodoItem]) {
         items = newItems
         save()

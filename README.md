@@ -14,7 +14,7 @@ A to-do list that lives in the macOS menu bar. Click the shooting star, type a t
 - **History.** A calendar with a star on every day you finished your whole list, and below it every archived list, which you can open in your Markdown editor or show in Finder.
 - **Notion (optional).** Each archived list is also added to a page in your Notion workspace.
 
-Also: double-click a task to edit it, hover to delete it, right-click for both. In today's field, Command-Return sends what you typed to Later instead. Escape closes the panel. Right-click the menu bar icon for settings and Quit. If the icon is hidden by a crowded menu bar, open Starlist again from Spotlight and the panel appears.
+Also: double-click a task to edit it, drag it up or down to reorder the list, hover to delete it, right-click to edit or delete. In today's field, Command-Return sends what you typed to Later instead. Escape closes the panel. Right-click the menu bar icon for settings and Quit. If the icon is hidden by a crowded menu bar, open Starlist again from Spotlight and the panel appears.
 
 ## Build and install
 

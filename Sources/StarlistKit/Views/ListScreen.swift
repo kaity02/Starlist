@@ -122,35 +122,12 @@ private struct TaskList: View {
     var highlighted: UUID?
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(spacing: 1) {
-                    ForEach(model.store.items) { item in
-                        TaskRow(item: item, model: model, showsActions: item.id == highlighted)
-                            .id(item.id)
-                            .transition(.opacity)
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .animation(.easeOut(duration: 0.2), value: model.store.items.map(\.id))
-            }
-            // Rows dissolve into the sky at the edges instead of being cut off.
-            .mask(
-                VStack(spacing: 0) {
-                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                        .frame(height: 8)
-                    Rectangle()
-                    LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                        .frame(height: 8)
-                }
-            )
-            .onChange(of: model.store.items.count) { old, new in
-                guard new > old, let last = model.store.items.last else { return }
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(last.id, anchor: .bottom)
-                }
-            }
+        ReorderableList(
+            items: model.store.items,
+            lockedID: model.editingID,
+            onMove: { id, index in model.store.move(id, to: index) }
+        ) { item in
+            TaskRow(item: item, model: model, showsActions: item.id == highlighted)
         }
     }
 }

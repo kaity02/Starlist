@@ -3,8 +3,8 @@
 //   starlist-dev icon <iconset-dir>     Renders the app icon at every size macOS wants.
 //   starlist-dev snapshot <out-dir>     Renders the panel in its main states, plus the glyphs.
 //   starlist-dev check                  Runs the logic checks (store, Markdown, archive,
-//                                       stars, the focus timer, and Notion against a
-//                                       stand-in server).
+//                                       reordering by drag, stars, the focus timer, and
+//                                       Notion against a stand-in server).
 
 import AppKit
 import StarlistKit
@@ -422,6 +422,117 @@ func renderSnapshots(into directory: URL) async throws {
     let paused = try timing("paused", steps: [18 * 60 + 5])
     paused.focus.pause()
     try await snapshot(RootView(model: paused), size: panel, to: out("17-focus-paused.png"))
+
+    // A task picked up and carried down the list, before it is dropped.
+    let carried = try sampleModel("dragging", tasks: sampleTasks)
+    let stage = Stage(RootView(model: carried), size: panel)
+    try await stage.settle(450)
+    try await stage.press(rowPoint(1), dragTo: rowPoint(4, x: 176))
+    try await stage.settle(300)
+    try stage.capture(to: out("18-dragging.png"))
+    try await stage.release(at: rowPoint(4, x: 176))
+    stage.window.close()
+}
+
+
+// MARK: - Pointer
+
+/// A view in a window that is open but far off every screen, so it can be
+/// clicked and dragged with made-up mouse events. Points are measured from
+/// the view's top left corner.
+@MainActor
+final class Stage {
+    let window: NSWindow
+    private let host: NSView
+
+    init<V: View>(_ view: V, size: CGSize) {
+        let host = NSHostingView(rootView: view)
+        host.frame = CGRect(origin: .zero, size: size)
+        window = NSWindow(
+            contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.backgroundColor = .clear
+        window.isOpaque = false
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.contentView = host
+        self.host = host
+        // SwiftUI only answers the mouse in a window that is on the window list.
+        window.setFrameOrigin(CGPoint(x: -20_000, y: -20_000))
+        window.orderFrontRegardless()
+        host.layoutSubtreeIfNeeded()
+    }
+
+    func settle(_ milliseconds: Int = 120) async throws {
+        try await Task.sleep(for: .milliseconds(milliseconds))
+        host.layoutSubtreeIfNeeded()
+    }
+
+    func mouse(_ type: NSEvent.EventType, at point: CGPoint, clicks: Int = 1) {
+        guard let event = NSEvent.mouseEvent(
+            with: type,
+            location: CGPoint(x: point.x, y: host.bounds.height - point.y),
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: clicks,
+            pressure: type == .leftMouseUp ? 0 : 1
+        ) else { return }
+        window.sendEvent(event)
+    }
+
+    func click(_ point: CGPoint, clicks: Int = 1) async throws {
+        for count in 1...clicks {
+            mouse(.leftMouseDown, at: point, clicks: count)
+            try await settle(30)
+            mouse(.leftMouseUp, at: point, clicks: count)
+            try await settle(30)
+        }
+        try await settle(250)
+    }
+
+    /// Presses at `start`, moves to `end` in small steps, and keeps holding.
+    func press(_ start: CGPoint, dragTo end: CGPoint, steps: Int = 12) async throws {
+        mouse(.leftMouseDown, at: start)
+        try await settle(30)
+        for step in 1...steps {
+            let t = CGFloat(step) / CGFloat(steps)
+            mouse(.leftMouseDragged, at: CGPoint(
+                x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t
+            ))
+            try await settle(16)
+        }
+    }
+
+    func release(at point: CGPoint) async throws {
+        mouse(.leftMouseUp, at: point)
+        try await settle(350)
+    }
+
+    func drag(_ start: CGPoint, to end: CGPoint) async throws {
+        try await press(start, dragTo: end)
+        try await release(at: end)
+    }
+
+    func capture(to url: URL) throws {
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
+            throw DevError(description: "No bitmap for \(url.lastPathComponent)")
+        }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        guard let data = rep.representation(using: .png, properties: [:]) else {
+            throw DevError(description: "Couldn't encode \(url.lastPathComponent)")
+        }
+        try data.write(to: url)
+        print("Wrote \(url.lastPathComponent)")
+    }
+}
+
+/// Where the rows of a list sit in the panel: the middle of the first one is
+/// 106 points below the top, and one-line rows follow 37 points apart.
+func rowPoint(_ row: Int, x: CGFloat = 170) -> CGPoint {
+    CGPoint(x: x, y: 106 + CGFloat(row) * 37)
 }
 
 // MARK: - Checks
@@ -585,6 +696,91 @@ func runChecks() async throws {
             paths: .contained(in: folder.deletingLastPathComponent()), transport: FakeNotion()
         )
         expect(relaunched.isFirstLaunch == false, "only the first launch counts as first")
+    }
+
+    print("Reordering")
+    do {
+        let url = try scratchDirectory("check-reorder").appendingPathComponent("tasks.json")
+        let store = TaskStore(fileURL: url)
+        for title in ["A", "B", "C", "D"] { store.add(title) }
+        let a = store.items[0].id
+        store.move(a, to: 2)
+        expect(store.items.map(\.title) == ["B", "C", "A", "D"], "a task moves down to where it is put")
+        store.move(store.items[3].id, to: 0)
+        expect(store.items.map(\.title) == ["D", "B", "C", "A"], "and up")
+        store.move(store.items[1].id, to: 99)
+        store.move(UUID(), to: 0)
+        expect(store.items.map(\.title) == ["D", "C", "A", "B"],
+               "a place past the end means last, and an unknown task changes nothing")
+        expect(TaskStore(fileURL: url).items == store.items, "the new order survives a relaunch")
+
+        // One-line rows around a three-line one, a point apart.
+        let layout = ReorderLayout(heights: [36, 36, 74, 36], spacing: 1)
+        expect(layout.destination(dragging: 0, by: 19) == 0 && layout.destination(dragging: 0, by: 20) == 1,
+               "a dragged row trades places once it covers half of its neighbor")
+        expect(layout.destination(dragging: 0, by: 75) == 1 && layout.destination(dragging: 0, by: 76) == 2,
+               "a tall neighbor takes longer to pass")
+        expect(layout.destination(dragging: 3, by: -38) == 3 && layout.destination(dragging: 3, by: -39) == 2,
+               "the same going up")
+        expect(layout.clamp(500, dragging: 0) == 149 && layout.clamp(-500, dragging: 3) == -149
+               && layout.clamp(-500, dragging: 0) == 0,
+               "the row can't be carried past either end of the list")
+        expect(layout.destination(dragging: 0, by: 149) == 3 && layout.destination(dragging: 3, by: -149) == 0,
+               "and at the end it lands first or last")
+        expect((0..<4).map { layout.shift(of: $0, dragging: 0, to: 2) } == [0, -37, -37, 0]
+               && (0..<4).map { layout.shift(of: $0, dragging: 3, to: 1) } == [0, 37, 37, 0],
+               "the rows it passes step aside by its height")
+    }
+
+    print("Dragging")
+    do {
+        // Real mouse events, sent to the panel in a window nobody sees.
+        let panel = CGSize(width: PanelMetrics.width, height: PanelMetrics.height)
+        let model = try sampleModel(
+            "check-drag", tasks: ["One", "Two", "Three", "Four"].map { ($0, false) }
+        )
+        let stage = Stage(RootView(model: model), size: panel)
+        try await stage.settle(450)
+        func order() -> [String] { model.store.items.map(\.title) }
+
+        try await stage.drag(rowPoint(0), to: rowPoint(2))
+        expect(order() == ["Two", "Three", "One", "Four"], "dragging a task down the list moves it there")
+        try await stage.drag(rowPoint(3), to: rowPoint(0, x: 176))
+        expect(order() == ["Four", "Two", "Three", "One"], "and up")
+        let saved = TaskStore(fileURL: model.store.fileURL).items.map(\.title)
+        expect(saved == order(), "the order is saved as soon as the task is dropped")
+
+        try await stage.drag(rowPoint(0), to: CGPoint(x: 170, y: rowPoint(0).y + 3))
+        expect(order() == ["Four", "Two", "Three", "One"], "a nudge of a few points is not a drag")
+        try await stage.click(rowPoint(1, x: 30))
+        expect(model.store.items[1].isDone, "the circle still checks a task off")
+        try await stage.click(rowPoint(0), clicks: 2)
+        expect(model.editingID == model.store.items[0].id, "double-clicking still edits")
+        try await stage.drag(rowPoint(0, x: 14), to: rowPoint(2, x: 14))
+        expect(order() == ["Four", "Two", "Three", "One"] && model.editingID != nil,
+               "a task stays where it is while its title is being edited")
+        stage.window.close()
+
+        let long = try sampleModel("check-drag-long", tasks: (1...16).map { ("Task \($0)", false) })
+        let longStage = Stage(RootView(model: long), size: panel)
+        try await longStage.settle(450)
+        let bottomEdge = CGPoint(x: 170, y: 402)
+        try await longStage.press(rowPoint(0), dragTo: bottomEdge)
+        try await longStage.settle(3000)
+        try await longStage.release(at: bottomEdge)
+        expect(long.store.items.last?.title == "Task 1" && long.store.items.first?.title == "Task 2",
+               "held at the bottom edge, a long list scrolls and the task can go all the way down")
+        longStage.window.close()
+
+        let later = try sampleModel("check-drag-later", tasks: [])
+        for title in ["One", "Two", "Three"] { later.later.add(title) }
+        later.screen = .later
+        let laterStage = Stage(RootView(model: later), size: panel)
+        try await laterStage.settle(450)
+        try await laterStage.drag(rowPoint(0), to: rowPoint(2))
+        expect(later.later.items.map(\.title) == ["Two", "Three", "One"],
+               "the Later list can be reordered the same way")
+        laterStage.window.close()
     }
 
     print("Archive failures")

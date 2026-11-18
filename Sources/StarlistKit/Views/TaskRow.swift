@@ -145,7 +145,7 @@ struct TaskRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onTapGesture(count: 2) { model.beginEditing(item.id) }
-            .help("Double-click to edit")
+            .help("Double-click to edit. Drag to reorder.")
             .accessibilityHidden(true)
     }
 }

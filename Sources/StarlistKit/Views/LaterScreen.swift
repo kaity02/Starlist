@@ -70,34 +70,12 @@ struct LaterScreen: View {
     }
 
     private var list: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(spacing: 1) {
-                    ForEach(model.later.items) { item in
-                        LaterRow(item: item, model: model, showsActions: item.id == highlighted)
-                            .id(item.id)
-                            .transition(.opacity)
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .animation(.easeOut(duration: 0.2), value: model.later.items.map(\.id))
-            }
-            .mask(
-                VStack(spacing: 0) {
-                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                        .frame(height: 8)
-                    Rectangle()
-                    LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                        .frame(height: 8)
-                }
-            )
-            .onChange(of: model.later.items.count) { old, new in
-                guard new > old, let last = model.later.items.last else { return }
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(last.id, anchor: .bottom)
-                }
-            }
+        ReorderableList(
+            items: model.later.items,
+            lockedID: model.editingID,
+            onMove: { id, index in model.later.move(id, to: index) }
+        ) { item in
+            LaterRow(item: item, model: model, showsActions: item.id == highlighted)
         }
     }
 }
@@ -141,7 +119,7 @@ private struct LaterRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                     .onTapGesture(count: 2) { model.beginEditing(item.id) }
-                    .help("Double-click to edit")
+                    .help("Double-click to edit. Drag to reorder.")
             }
 
             HStack(spacing: 0) {
