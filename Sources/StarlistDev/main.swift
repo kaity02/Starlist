@@ -151,6 +151,34 @@ struct GlyphSheet: View {
     }
 }
 
+// MARK: - A stand-in for the keychain
+
+/// Holds a secret the way the login keychain did, including refusing to hand
+/// it over when macOS's password prompt is dismissed.
+final class FakeKeychain: SecretStore, @unchecked Sendable {
+    var secret: String?
+    var isBlocked = false
+    private(set) var reads = 0
+
+    init(secret: String?) {
+        self.secret = secret
+    }
+
+    func read() throws -> String? {
+        reads += 1
+        if isBlocked, secret != nil { throw SecretStoreError(status: -25293) }
+        return secret
+    }
+
+    func write(_ secret: String) throws {
+        self.secret = secret
+    }
+
+    func delete() {
+        secret = nil
+    }
+}
+
 // MARK: - A stand-in for Notion
 
 /// Answers Notion API requests from memory and records what was asked.
@@ -1166,6 +1194,66 @@ func runChecks() async throws {
         expect(!model.notion.isConnected && model.notion.pending.isEmpty, "disconnecting forgets everything")
         let secretFile = model.store.fileURL.deletingLastPathComponent().appendingPathComponent("notion-secret")
         expect(!fm.fileExists(atPath: secretFile.path), "including the secret")
+    }
+
+    print("Notion secret")
+    do {
+        // A secret saved by an earlier version, in a keychain this build can't read yet.
+        let dir = try scratchDirectory("check-secret")
+        let secretFile = dir.appendingPathComponent("notion-secret")
+        let keychain = FakeKeychain(secret: "secret_from_keychain")
+        keychain.isBlocked = true
+        let secrets = MigratingSecretStore(current: FileSecretStore(fileURL: secretFile), old: keychain)
+
+        let settings = SettingsStore(fileURL: dir.appendingPathComponent("settings.json"))
+        settings.update { $0.notion = NotionLink(pageID: samplePageID, pageTitle: "Work progress") }
+        let notionServer = FakeNotion()
+        let sync = NotionSync(
+            settings: settings, secrets: secrets, transport: notionServer,
+            outboxURL: dir.appendingPathComponent("notion-outbox.json")
+        )
+        sync.enqueue(items: [TodoItem(title: "Water the fig tree", isDone: true)], archivedAt: Date(), holdFor: 0)
+
+        expect(await sync.flush() == .failed(.secretBlocked) && sync.lastError == .secretBlocked,
+               "a keychain that won't hand over the secret is reported as blocked, not missing")
+        expect(sync.pending.count == 1 && notionServer.calls.isEmpty,
+               "the list stays queued and nothing is sent")
+        expect(NotionError.secretBlocked.message.contains("log in to this Mac")
+               && NotionError.secretBlocked.message.contains("not the Notion secret"),
+               "the message asks for the Mac password, not the Notion secret")
+        expect(!NotionError.secretBlocked.isTemporary, "and offers to open the Notion screen")
+        expect(!fm.fileExists(atPath: secretFile.path), "no secret file is written while blocked")
+
+        // The person lets macOS hand it over, once.
+        keychain.isBlocked = false
+        expect(await sync.flush() == .added(1) && sync.pending.isEmpty, "once allowed, the queued list is sent")
+        expect(notionServer.calls.last?.headers["Authorization"] == "Bearer secret_from_keychain",
+               "with the secret that was in the keychain")
+        expect((try? String(contentsOf: secretFile, encoding: .utf8)) == "secret_from_keychain"
+               && keychain.secret == nil,
+               "the secret moves from the keychain into the file")
+        let mode = (try? fm.attributesOfItem(atPath: secretFile.path))?[.posixPermissions] as? Int
+        expect(mode == 0o600, "which only the user can read")
+
+        // A new build, a relaunch: the keychain is never asked again.
+        let readsSoFar = keychain.reads
+        let relaunched = NotionSync(
+            settings: settings, secrets: secrets, transport: notionServer,
+            outboxURL: dir.appendingPathComponent("notion-outbox.json")
+        )
+        relaunched.enqueue(items: [TodoItem(title: "Renew passport")], archivedAt: Date(), holdFor: 0)
+        expect(await relaunched.flush() == .added(1) && keychain.reads == readsSoFar,
+               "later sends read the file and leave the keychain alone")
+
+        // Connecting saves to the file; disconnecting clears both places.
+        try secrets.write("secret_new")
+        expect((try? secrets.read()) == "secret_new" && keychain.secret == nil,
+               "a newly connected secret goes to the file only")
+        keychain.secret = "secret_stale"
+        secrets.delete()
+        expect(!fm.fileExists(atPath: secretFile.path) && keychain.secret == nil,
+               "disconnecting removes the secret from the file and the keychain")
+        expect((try? secrets.read()) == .some(nil), "and with nothing saved anywhere, there is no secret")
     }
 
     print("Notion entry")

@@ -5,16 +5,26 @@ import Security
 
 /// Where the Notion integration secret is kept.
 public protocol SecretStore: Sendable {
-    func read() -> String?
+    /// Nil when nothing is saved. Throws when a secret is there but can't be read.
+    func read() throws -> String?
     func write(_ secret: String) throws
     func delete()
 }
 
 public struct SecretStoreError: Error {
     public let status: OSStatus
+
+    public init(status: OSStatus) {
+        self.status = status
+    }
 }
 
-/// The real store: the user's login keychain.
+/// Where earlier versions kept the secret: the user's login keychain.
+///
+/// macOS ties a keychain item to the exact build that saved it, and every
+/// rebuild of an ad-hoc signed app counts as a different app. Reading the item
+/// from a new build makes macOS ask for the login keychain password, so the
+/// app now only reads from here once, to move the secret into a file.
 public struct KeychainSecretStore: SecretStore {
     private let service = "com.kaitlyn.Starlist"
     private let account = "notion-integration-secret"
@@ -29,14 +39,22 @@ public struct KeychainSecretStore: SecretStore {
         ]
     }
 
-    public func read() -> String? {
+    public func read() throws -> String? {
         var query = baseQuery
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        switch status {
+        case errSecSuccess:
+            return (result as? Data).flatMap { String(data: $0, encoding: .utf8) }
+        case errSecItemNotFound:
+            return nil
+        default:
+            // The item is there, but macOS wouldn't hand it over: the person
+            // dismissed the password prompt or typed something it didn't accept.
+            throw SecretStoreError(status: status)
+        }
     }
 
     public func write(_ secret: String) throws {
@@ -53,7 +71,8 @@ public struct KeychainSecretStore: SecretStore {
     }
 }
 
-/// For `--data-dir` runs and checks, so they never touch the keychain.
+/// The real store: a file in the data folder that only the user can read.
+/// Unlike a keychain item, it stays readable when the app is rebuilt.
 public struct FileSecretStore: SecretStore {
     private let fileURL: URL
 
@@ -75,6 +94,36 @@ public struct FileSecretStore: SecretStore {
 
     public func delete() {
         try? FileManager.default.removeItem(at: fileURL)
+    }
+}
+
+/// Uses `current`, and moves the secret there from `old` the first time it is
+/// needed. After that, `old` is never read again.
+public struct MigratingSecretStore: SecretStore {
+    private let current: SecretStore
+    private let old: SecretStore
+
+    public init(current: SecretStore, old: SecretStore) {
+        self.current = current
+        self.old = old
+    }
+
+    public func read() throws -> String? {
+        if let secret = try current.read() { return secret }
+        guard let secret = try old.read() else { return nil }
+        // Only let go of the old copy once the new one is safely written.
+        if (try? current.write(secret)) != nil { old.delete() }
+        return secret
+    }
+
+    public func write(_ secret: String) throws {
+        try current.write(secret)
+        old.delete()
+    }
+
+    public func delete() {
+        current.delete()
+        old.delete()
     }
 }
 
@@ -105,6 +154,8 @@ public struct URLSessionTransport: NotionTransport {
 public enum NotionError: Error, Equatable, Sendable {
     case badLink
     case missingSecret
+    /// The secret is saved, but macOS wouldn't let this build read it.
+    case secretBlocked
     case unauthorized
     case notShared
     case cannotInsert
@@ -118,6 +169,8 @@ public enum NotionError: Error, Equatable, Sendable {
             "That doesn't look like a Notion page link. In Notion, open the page's menu and choose Copy link."
         case .missingSecret:
             "Starlist needs your integration secret. Paste it to connect."
+        case .secretBlocked:
+            "macOS didn't let Starlist read your saved Notion secret. When macOS asks, enter the password you use to log in to this Mac, not the Notion secret, then choose Allow."
         case .unauthorized:
             "Notion didn't accept that secret. Copy it again from your integration's page."
         case .notShared:
@@ -457,9 +510,16 @@ public final class NotionSync: ObservableObject {
         guard var working = link, !isWorking else { return .nothingToSend }
         let due = pending.filter { $0.sendAfter <= now }
         guard !due.isEmpty else { return .nothingToSend }
-        guard let secret = cachedSecret ?? secrets.read() else {
-            lastError = .missingSecret
-            return .failed(.missingSecret)
+        let secret: String
+        do {
+            guard let stored = try cachedSecret ?? secrets.read() else {
+                lastError = .missingSecret
+                return .failed(.missingSecret)
+            }
+            secret = stored
+        } catch {
+            lastError = .secretBlocked
+            return .failed(.secretBlocked)
         }
         cachedSecret = secret
 
