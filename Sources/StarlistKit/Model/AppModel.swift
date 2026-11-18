@@ -83,9 +83,10 @@ public final class AppModel: ObservableObject {
         let folder = settings.value.archiveFolderPath
             .map { URL(fileURLWithPath: $0, isDirectory: true) } ?? paths.defaultArchiveFolder
         archive = ArchiveStore(folderURL: folder)
-        let secrets: SecretStore = paths.keepsSecretInKeychain
-            ? KeychainSecretStore()
-            : FileSecretStore(fileURL: data.appendingPathComponent("notion-secret"))
+        let secretFile = FileSecretStore(fileURL: data.appendingPathComponent("notion-secret"))
+        let secrets: SecretStore = paths.movesSecretFromKeychain
+            ? MigratingSecretStore(current: secretFile, old: KeychainSecretStore())
+            : secretFile
         notion = NotionSync(
             settings: settings,
             secrets: secrets,

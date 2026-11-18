@@ -30,14 +30,15 @@ public struct AppPaths: Sendable {
     public var dataDirectory: URL
     /// Where archived lists go until the user picks another folder.
     public var defaultArchiveFolder: URL
-    /// The Notion secret goes in the login keychain, except in contained runs,
-    /// which keep it in a file inside their own folder.
-    public var keepsSecretInKeychain: Bool
+    /// The Notion secret is kept in a file in the data directory. Earlier
+    /// versions kept it in the login keychain; when this is true, a secret
+    /// still there is moved into the file. Contained runs never touch the keychain.
+    public var movesSecretFromKeychain: Bool
 
-    public init(dataDirectory: URL, defaultArchiveFolder: URL, keepsSecretInKeychain: Bool) {
+    public init(dataDirectory: URL, defaultArchiveFolder: URL, movesSecretFromKeychain: Bool) {
         self.dataDirectory = dataDirectory
         self.defaultArchiveFolder = defaultArchiveFolder
-        self.keepsSecretInKeychain = keepsSecretInKeychain
+        self.movesSecretFromKeychain = movesSecretFromKeychain
     }
 
     public static var standard: AppPaths {
@@ -47,7 +48,7 @@ public struct AppPaths: Sendable {
         return AppPaths(
             dataDirectory: support.appendingPathComponent("Starlist", isDirectory: true),
             defaultArchiveFolder: documents.appendingPathComponent("Starlist", isDirectory: true),
-            keepsSecretInKeychain: true
+            movesSecretFromKeychain: true
         )
     }
 
@@ -56,7 +57,7 @@ public struct AppPaths: Sendable {
         AppPaths(
             dataDirectory: directory,
             defaultArchiveFolder: directory.appendingPathComponent("Archive", isDirectory: true),
-            keepsSecretInKeychain: false
+            movesSecretFromKeychain: false
         )
     }
 }

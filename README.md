@@ -43,7 +43,9 @@ From then on, archiving works like this:
 - Lists go directly under a "Starlist" heading that the app adds to the page the first time. Newest is on top. Move that heading anywhere on the page and new lists follow it; delete it and the app makes a new one.
 - If Notion can't be reached, the list waits in a queue on disk and is sent the next time you open the panel, archive, or launch the app.
 
-The secret is stored in your login keychain, not in a file. After rebuilding the app, macOS may ask once whether the new build can read it.
+The secret is stored in a file only your account can read, `~/Library/Application Support/Starlist/notion-secret`. It never leaves your Mac except to go to Notion.
+
+Earlier versions kept the secret in your login keychain. The first time a newer build needs it, macOS asks once for your login keychain password, which is the password you use to log in to your Mac, not the Notion secret. Starlist then moves the secret into the file and macOS doesn't ask again, including after rebuilding the app.
 
 ## The focus timer
 
@@ -62,6 +64,7 @@ The timer keeps running with the panel closed. When a focus session ends, a noti
 | Stars (days you finished everything) | `~/Library/Application Support/Starlist/stars.json` |
 | Settings | `~/Library/Application Support/Starlist/settings.json` |
 | Lists waiting for Notion | `~/Library/Application Support/Starlist/notion-outbox.json` |
+| Notion integration secret | `~/Library/Application Support/Starlist/notion-secret` |
 | Archived lists | `~/Documents/Starlist/` (change it from History, "Change folder…") |
 
 The first time you archive, macOS asks whether Starlist may use your Documents folder.
@@ -115,7 +118,7 @@ Three things worth knowing:
 
 - The app icon and menu bar glyph are drawn in code (`Design/StarShapes.swift`, `Design/AppIconView.swift`). The build script renders the icon at every size and packs the `.icns`.
 - Views use `@Stored` instead of `@State`. In the macOS 27 SDK `@State` is a compiler macro whose plugin ships only with Xcode; `Stored` is an alias for the same SwiftUI type that builds with the Command Line Tools alone. See `Design/Stored.swift`.
-- Notion requests use API version `2026-03-11` (`Model/Notion.swift`). With `--data-dir`, the secret is kept in a file inside that folder instead of the keychain.
+- Notion requests use API version `2026-03-11` (`Model/Notion.swift`). The secret is kept in a file in the data folder, not the keychain: the build is ad-hoc signed, so macOS would treat each rebuild as a different app and ask for the keychain password again. With `--data-dir`, the keychain is never touched at all.
 
 ## License
 
