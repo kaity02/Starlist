@@ -123,7 +123,7 @@ struct BannerView: View {
                 GhostButton(title: "Show file", help: "Show the Markdown file in Finder") {
                     model.revealFile(fileURL)
                 }
-                GhostButton(title: "Undo", accent: true, help: "Put the tasks back and remove the file") {
+                GhostButton(title: "Undo", accent: true, help: "Put the finished tasks back and remove the file") {
                     Task { await model.undoArchive() }
                 }
 

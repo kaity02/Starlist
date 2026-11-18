@@ -206,8 +206,9 @@ public final class AppModel: ObservableObject {
 
     // MARK: Archive
 
-    /// Saves the whole list as a Markdown file and leaves the list empty.
-    /// If Notion is connected, the list is added there once Undo has expired.
+    /// Saves the whole list as a Markdown file, then takes the finished tasks
+    /// off it. Unfinished tasks stay on the list for another day.
+    /// If Notion is connected, the whole list is added there once Undo has expired.
     public func archiveList() async {
         let snapshot = store.items
         guard !snapshot.isEmpty, !isArchiving else { return }
@@ -217,9 +218,10 @@ public final class AppModel: ObservableObject {
         let now = Date()
         do {
             let url = try await archive.save(items: snapshot, at: now)
-            // Keep anything that was added while the file was saving.
-            let archived = Set(snapshot.map(\.id))
-            store.replaceAll(store.items.filter { !archived.contains($0.id) })
+            // Only what was finished leaves the list. Unfinished tasks stay,
+            // and so does anything added while the file was saving.
+            let finished = Set(snapshot.filter(\.isDone).map(\.id))
+            store.replaceAll(store.items.filter { !finished.contains($0.id) })
 
             let hold = bannerDuration.seconds + 0.5
             let entry = notion.enqueue(items: snapshot, archivedAt: now, holdFor: hold)
@@ -240,16 +242,20 @@ public final class AppModel: ObservableObject {
         }
     }
 
-    /// Puts the archived tasks back, removes the file that was just written,
-    /// and takes the list out of the queue for Notion.
+    /// Puts the finished tasks back where they were, removes the file that was
+    /// just written, and takes the list out of the queue for Notion.
     public func undoArchive() async {
         guard let last = lastArchive else { return }
         lastArchive = nil
         dismissBanner()
         if let entry = last.notionEntry { notion.cancel(entry) }
-        let restored = Set(last.snapshot.map(\.id))
-        let addedSince = store.items.filter { !restored.contains($0.id) }
-        store.replaceAll(last.snapshot + addedSince)
+        let archived = Set(last.snapshot.map(\.id))
+        let current = Dictionary(store.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        // The unfinished tasks never left: keep them as they are now, so one
+        // checked off or deleted since the archive stays that way.
+        let restored = last.snapshot.compactMap { $0.isDone ? $0 : current[$0.id] }
+        let addedSince = store.items.filter { !archived.contains($0.id) }
+        store.replaceAll(restored + addedSince)
         await archive.delete(last.fileURL)
     }
 

@@ -540,7 +540,9 @@ func runChecks() async throws {
         await model.archiveList()
         let files = (try? fm.contentsOfDirectory(atPath: folder.path)) ?? []
         expect(files.count == 1 && files[0].hasSuffix("To-do list.md"), "writes one Markdown file")
-        expect(model.store.items.isEmpty, "archiving leaves the list empty, unfinished tasks included")
+        expect(model.store.items.map(\.title) == sampleTasks.filter { !$0.1 }.map(\.0)
+               && model.store.doneCount == 0,
+               "archiving takes finished tasks off the list and keeps the unfinished ones")
         if case let .archived(count, _) = model.banner {
             expect(count == 6, "confirms how many tasks were saved")
         } else {
@@ -550,9 +552,16 @@ func runChecks() async throws {
                "History shows all six tasks, two of them done")
 
         model.store.add("Added after archiving")
+        model.toggle(model.store.items[0].id)
+        model.store.remove(model.store.items[3].id)
         await model.undoArchive()
-        expect(model.store.items.count == 7 && model.store.doneCount == 2,
-               "undo restores the list and keeps tasks added since")
+        expect(model.store.items.map(\.title) == [
+            "Send the invoice to the studio", "Book flights for the conference", "Water the fig tree",
+            "Draft the case study intro and send it to Priya for a first read", "Renew passport",
+            "Added after archiving",
+        ], "undo puts the finished tasks back where they were and keeps tasks added since")
+        expect(model.store.doneCount == 3,
+               "a task finished or deleted since the archive stays that way after undo")
         expect(((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).isEmpty,
                "undo removes the file it wrote")
         expect(model.banner == nil && model.archive.lists.isEmpty, "undo clears the banner and History")
@@ -564,6 +573,10 @@ func runChecks() async throws {
         expect(names.count == 2 && names.contains { $0.hasSuffix("To-do list 2.md") },
                "a second archive the same day gets its own file")
         expect(model.archive.lists.count == 2, "History lists both")
+        expect(model.archive.lists.contains { $0.items.count == 4 && $0.doneCount == 0 },
+               "tasks left unfinished are recorded again in the next archive")
+        expect(model.store.items.count == 4, "and stay on the list until they are finished")
+        model.store.replaceAll([])
         await model.archiveList()
         expect(((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).count == 2,
                "archiving an empty list writes nothing")
@@ -842,11 +855,14 @@ func runChecks() async throws {
                && first.headers["Notion-Version"] == "2026-03-11",
                "sends the trimmed secret and the API version")
 
+        model.store.replaceAll([])
         for (title, done) in sampleTasks.prefix(3) {
             if let item = model.store.add(title), done { model.store.toggle(item.id) }
         }
         await model.archiveList()
         expect(model.notion.pending.count == 1, "an archived list is queued for Notion")
+        expect(model.store.items.map(\.title) == ["Book flights for the conference"],
+               "the unfinished task stays on the list")
         expect(await model.notion.flush() == .nothingToSend && notionServer.appends.isEmpty,
                "it is held back while Undo is still possible")
         try await Task.sleep(for: .milliseconds(900))
@@ -867,7 +883,7 @@ func runChecks() async throws {
         expect(Array(blocks.suffix(3)) == [
             "[x] Send the invoice to the studio", "[x] Water the fig tree",
             "[ ] Book flights for the conference",
-        ], "then the tasks as to-dos, finished ones checked")
+        ], "then every task as a to-do, finished ones checked, unfinished ones included")
         expect(model.notion.link?.lastAddedAt != nil, "remembers when it last added something")
 
         // Undo before the hold expires.
@@ -940,6 +956,7 @@ func runChecks() async throws {
 
         // More tasks than fit in one request.
         let before = notionServer.appends.count
+        model.store.replaceAll([])
         for index in 1...150 { model.store.add("Task \(index)") }
         await model.archiveList()
         try await Task.sleep(for: .milliseconds(1100))

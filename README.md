@@ -10,7 +10,7 @@ A to-do list that lives in the macOS menu bar. Click the shooting star, type a t
 - **See what's left at a glance.** The menu bar icon carries a red dot while any task is unfinished.
 - **Focus with a timer.** Click the timer at the top of the list for 25 minutes of focus, then a 5-minute break. When the break is over, click it again for the next 25 minutes. The time left shows in the menu bar beside the star.
 - **Keep things for later.** The Later list holds tasks for another day. They don't count toward today: no red dot, no star, and Archive leaves them alone. Hover a task and click the clock to put it off, or "Do today" to bring it back.
-- **Archive the list.** Nothing is archived until you press "Archive list". Then the whole list, finished or not, is saved as a Markdown file and the list is left empty. A banner offers **Undo** for a few seconds.
+- **Archive the list.** Nothing is archived until you press "Archive list". Then the whole list, finished or not, is saved as a Markdown file. Finished tasks leave the list; unfinished ones stay on it for another day. A banner offers **Undo** for a few seconds.
 - **History.** A calendar with a star on every day you finished your whole list, and below it every archived list, which you can open in your Markdown editor or show in Finder.
 - **Notion (optional).** Each archived list is also added to a page in your Notion workspace.
 

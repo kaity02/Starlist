@@ -46,7 +46,7 @@ struct ListScreen: View {
             HStack {
                 GhostButton(
                     title: "Archive list",
-                    help: "Save this list to History as a Markdown file"
+                    help: "Save this list to History. Unfinished tasks stay on the list."
                 ) {
                     Task { await model.archiveList() }
                 }
