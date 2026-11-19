@@ -165,10 +165,12 @@ struct ReorderableList<Row: View>: View {
                         .frame(height: 8)
                 }
             )
-            .onChange(of: items.count) { old, new in
-                guard new > old, let last = items.last else { return }
+            .onChange(of: items.map(\.id)) { old, new in
+                // A new task is not always last: it goes above the finished ones.
+                guard new.count > old.count,
+                      let added = new.last(where: { !old.contains($0) }) else { return }
                 withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(last.id, anchor: .bottom)
+                    proxy.scrollTo(added, anchor: .bottom)
                 }
             }
             .onChange(of: isPressed) { _, pressed in

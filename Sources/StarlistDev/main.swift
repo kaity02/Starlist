@@ -612,6 +612,34 @@ func runChecks() async throws {
         expect(recovered.items.isEmpty && setAside, "an unreadable file is set aside, not overwritten")
     }
 
+    print("Checking off")
+    do {
+        let url = try scratchDirectory("check-finish").appendingPathComponent("tasks.json")
+        let store = TaskStore(fileURL: url)
+        for title in ["A", "B", "C", "D"] { store.add(title) }
+        // Finished tasks are marked with a star.
+        func order() -> [String] { store.items.map { $0.isDone ? "\($0.title)*" : $0.title } }
+        func id(_ title: String) -> UUID { store.items.first { $0.title == title }!.id }
+
+        store.toggle(id("B"))
+        expect(order() == ["A", "C", "D", "B*"], "a task that is checked off goes to the bottom of the list")
+        store.toggle(id("A"))
+        expect(order() == ["C", "D", "B*", "A*"], "below the ones finished before it")
+        store.toggle(id("A"))
+        store.toggle(id("A"))
+        expect(order() == ["C", "D", "B*", "A*"], "the last task on the list stays where it is")
+        store.add("E")
+        expect(order() == ["C", "D", "E", "B*", "A*"], "a new task goes above the finished ones")
+        store.toggle(id("A"))
+        expect(order() == ["C", "D", "E", "A", "B*"], "an un-checked task moves back above them")
+        expect(TaskStore(fileURL: url).items == store.items, "the new places survive a relaunch")
+
+        store.move(id("B"), to: 0)
+        store.toggle(id("B"))
+        expect(order() == ["B", "C", "D", "E", "A"],
+               "a finished task dragged up the list stays there when it is un-checked")
+    }
+
     let zone = TimeZone(identifier: "America/Los_Angeles")!
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = zone
@@ -690,15 +718,22 @@ func runChecks() async throws {
         expect(model.archive.lists.first?.items.count == 6 && model.archive.lists.first?.doneCount == 2,
                "History shows all six tasks, two of them done")
 
+        let untouched = model.store.items
+        await model.undoArchive()
+        expect(model.store.items.map(\.title) == untouched.map(\.title) + [
+            "Send the invoice to the studio", "Water the fig tree",
+        ], "undo puts the finished tasks back where they were")
+        await model.archiveList()
+
         model.store.add("Added after archiving")
         model.toggle(model.store.items[0].id)
-        model.store.remove(model.store.items[3].id)
+        model.store.remove(model.store.items.first { $0.title == "Call the dentist" }!.id)
         await model.undoArchive()
         expect(model.store.items.map(\.title) == [
-            "Send the invoice to the studio", "Book flights for the conference", "Water the fig tree",
             "Draft the case study intro and send it to Priya for a first read", "Renew passport",
             "Added after archiving",
-        ], "undo puts the finished tasks back where they were and keeps tasks added since")
+            "Send the invoice to the studio", "Water the fig tree", "Book flights for the conference",
+        ], "undo keeps a task added since above them, and one finished since at the bottom")
         expect(model.store.doneCount == 3,
                "a task finished or deleted since the archive stays that way after undo")
         expect(((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).isEmpty,
@@ -781,11 +816,12 @@ func runChecks() async throws {
         try await stage.drag(rowPoint(0), to: CGPoint(x: 170, y: rowPoint(0).y + 3))
         expect(order() == ["Four", "Two", "Three", "One"], "a nudge of a few points is not a drag")
         try await stage.click(rowPoint(1, x: 30))
-        expect(model.store.items[1].isDone, "the circle still checks a task off")
+        expect(order() == ["Four", "Three", "One", "Two"] && model.store.items[3].isDone,
+               "the circle still checks a task off, and it goes to the bottom")
         try await stage.click(rowPoint(0), clicks: 2)
         expect(model.editingID == model.store.items[0].id, "double-clicking still edits")
         try await stage.drag(rowPoint(0, x: 14), to: rowPoint(2, x: 14))
-        expect(order() == ["Four", "Two", "Three", "One"] && model.editingID != nil,
+        expect(order() == ["Four", "Three", "One", "Two"] && model.editingID != nil,
                "a task stays where it is while its title is being edited")
         stage.window.close()
 
@@ -882,7 +918,8 @@ func runChecks() async throws {
     print("Later list")
     do {
         let model = try sampleModel("check-later", tasks: [("One", true), ("Two", false)])
-        let two = model.store.items[1]
+        let one = model.store.items.first { $0.title == "One" }!
+        let two = model.store.items.first { $0.title == "Two" }!
         model.laterDraft = "  Someday  "
         model.addLaterDraft()
         expect(model.later.items.map(\.title) == ["Someday"] && model.laterDraft.isEmpty,
@@ -894,7 +931,7 @@ func runChecks() async throws {
                && model.draft.isEmpty && model.store.items.count == 2,
                "today's field can send a task to Later instead")
 
-        model.moveToLater(model.store.items[0].id)
+        model.moveToLater(one.id)
         expect(model.store.items.count == 2, "a finished task stays on today's list")
         model.moveToLater(two.id)
         expect(model.store.items.map(\.title) == ["One"] && model.later.items.last?.id == two.id,
@@ -903,8 +940,9 @@ func runChecks() async throws {
                "putting off the last unfinished task does not earn the star")
 
         model.moveToToday(two.id)
-        expect(model.store.items.last?.id == two.id && !model.later.items.contains { $0.id == two.id },
-               "and brought back to today")
+        expect(model.store.items.map(\.id) == [two.id, one.id]
+               && !model.later.items.contains { $0.id == two.id },
+               "and brought back to today, above the finished task")
         model.toggle(two.id)
         expect(model.stars.total == 1, "finishing it today earns the star")
 
