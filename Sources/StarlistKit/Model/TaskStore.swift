@@ -25,15 +25,22 @@ public final class TaskStore: ObservableObject {
         let title = Self.clean(rawTitle)
         guard !title.isEmpty else { return nil }
         let item = TodoItem(title: title)
-        items.append(item)
+        Self.place(item, in: &items)
         save()
         return item
     }
 
+    /// Checks a task off, or un-checks it. A finished task goes straight to
+    /// the bottom of the list. One that is un-checked moves up only as far as
+    /// it must to sit above the finished tasks.
     public func toggle(_ id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-        items[index].isDone.toggle()
-        items[index].completedAt = items[index].isDone ? Date() : nil
+        var list = items
+        var item = list.remove(at: index)
+        item.isDone.toggle()
+        item.completedAt = item.isDone ? Date() : nil
+        Self.place(item, in: &list, noLowerThan: index)
+        items = list
         save()
     }
 
@@ -60,9 +67,9 @@ public final class TaskStore: ObservableObject {
         return item
     }
 
-    /// Adds a task that already exists (moved here from another list) at the end.
+    /// Adds a task that already exists (moved here from another list).
     public func insert(_ item: TodoItem) {
-        items.append(item)
+        Self.place(item, in: &items)
         save()
     }
 
@@ -78,6 +85,19 @@ public final class TaskStore: ObservableObject {
     public func replaceAll(_ newItems: [TodoItem]) {
         items = newItems
         save()
+    }
+
+    /// Puts a task where it belongs on a list: a finished one at the very
+    /// bottom, an unfinished one just above the finished tasks gathered there.
+    /// `limit` keeps an unfinished task from landing any lower than that place.
+    static func place(_ item: TodoItem, in items: inout [TodoItem], noLowerThan limit: Int? = nil) {
+        guard !item.isDone else {
+            items.append(item)
+            return
+        }
+        let finishedAtBottom = items.reversed().prefix(while: \.isDone).count
+        let lastOpenPlace = items.count - finishedAtBottom
+        items.insert(item, at: min(limit ?? lastOpenPlace, lastOpenPlace))
     }
 
     /// Task titles are a single line with no stray whitespace.

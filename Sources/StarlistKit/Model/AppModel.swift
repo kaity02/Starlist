@@ -253,10 +253,15 @@ public final class AppModel: ObservableObject {
         let archived = Set(last.snapshot.map(\.id))
         let current = Dictionary(store.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         // The unfinished tasks never left: keep them as they are now, so one
-        // checked off or deleted since the archive stays that way.
-        let restored = last.snapshot.compactMap { $0.isDone ? $0 : current[$0.id] }
-        let addedSince = store.items.filter { !archived.contains($0.id) }
-        store.replaceAll(restored + addedSince)
+        // deleted since the archive stays that way.
+        var restored = last.snapshot.compactMap { item in
+            item.isDone ? item : current[item.id].flatMap { $0.isDone ? nil : $0 }
+        }
+        // A task added or checked off since goes where the list would put it.
+        for item in store.items where item.isDone || !archived.contains(item.id) {
+            TaskStore.place(item, in: &restored)
+        }
+        store.replaceAll(restored)
         await archive.delete(last.fileURL)
     }
 

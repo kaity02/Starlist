@@ -5,7 +5,7 @@ A to-do list that lives in the macOS menu bar. Click the shooting star, type a t
 ## What it does
 
 - **Add a task.** The field is ready for typing as soon as the panel opens.
-- **Check it off.** Click the circle. It becomes a star, and a small comet crosses the task out.
+- **Check it off.** Click the circle. It becomes a star, a small comet crosses the task out, and the task drops to the bottom of the list, below everything still to do. New tasks land above the finished ones.
 - **Finish everything.** Checking off the last task sets off a burst of stars and earns the day's star.
 - **See what's left at a glance.** The menu bar icon carries a red dot while any task is unfinished.
 - **Focus with a timer.** Click the timer at the top of the list for 25 minutes of focus, then a 5-minute break. When the break is over, click it again for the next 25 minutes. The time left shows in the menu bar beside the star.
