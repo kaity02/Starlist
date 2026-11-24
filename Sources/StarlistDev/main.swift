@@ -428,7 +428,8 @@ func renderSnapshots(into directory: URL) async throws {
     laterEmpty.screen = .later
     try await snapshot(RootView(model: laterEmpty), size: panel, to: out("14-later-empty.png"))
 
-    // The focus timer: part way through a session, on a break, and paused.
+    // The focus timer: part way through a session, on a break, paused, and
+    // (further down) the lengths to choose from.
     // Each runs on a clock that is wound forward in steps and then stands still.
     func timing(_ name: String, steps: [TimeInterval]) throws -> AppModel {
         let model = try sampleModel(name, tasks: Array(sampleTasks.prefix(4)))
@@ -444,12 +445,16 @@ func renderSnapshots(into directory: URL) async throws {
     let focusing = try timing("focus", steps: [9 * 60 + 48])
     try await snapshot(RootView(model: focusing), size: panel, to: out("15-focus.png"))
 
-    let resting = try timing("break", steps: [FocusTimer.focusLength, 72])
+    let resting = try timing("break", steps: [25 * 60, 72])
     try await snapshot(RootView(model: resting), size: panel, to: out("16-break.png"))
 
     let paused = try timing("paused", steps: [18 * 60 + 5])
     paused.focus.pause()
     try await snapshot(RootView(model: paused), size: panel, to: out("17-focus-paused.png"))
+
+    let choosing = try sampleModel("focus-choices", tasks: Array(sampleTasks.prefix(4)))
+    choosing.toggleFocusChoices()
+    try await snapshot(RootView(model: choosing), size: panel, to: out("19-focus-choices.png"))
 
     // A task picked up and carried down the list, before it is dropped.
     let carried = try sampleModel("dragging", tasks: sampleTasks)
@@ -1041,6 +1046,82 @@ func runChecks() async throws {
         timer.start()
         expect(!timer.isPaused && timer.timeText == "25:00", "starting again un-pauses")
         timer.stop()
+
+        // Longer sessions. The break is five minutes whatever the focus was.
+        expect(FocusTimer.focusChoices == [25, 40, 60], "offers 25, 40 or 60 minutes of focus")
+        ended = []
+        timer.start(minutes: 40)
+        expect(timer.phase == .focus && timer.timeText == "40:00" && timer.focusMinutes == 40,
+               "a 40-minute session starts at 40:00")
+        now += 20 * 60
+        timer.tick()
+        expect(timer.timeText == "20:00" && timer.progress == 0.5,
+               "and is half way after twenty minutes")
+        now += 20 * 60
+        timer.tick()
+        expect(timer.phase == .rest && timer.timeText == "5:00" && ended == [.focus],
+               "its break is still five minutes")
+        expect(timer.focusMinutes == 40, "and the break remembers how long the focus was")
+        now += 5 * 60
+        timer.tick()
+        timer.start(minutes: 60)
+        expect(timer.phase == .focus && timer.timeText == "60:00" && timer.focusMinutes == 60,
+               "a 60-minute session starts at 60:00")
+        now += 59 * 60 + 59
+        timer.tick()
+        expect(timer.phase == .focus && timer.timeText == "0:01", "and lasts the whole hour")
+        now += 1
+        timer.tick()
+        expect(timer.phase == .rest && timer.timeText == "5:00", "before its five-minute break")
+        timer.stop()
+        timer.start()
+        expect(timer.timeText == "25:00" && timer.focusMinutes == 25,
+               "a session started without a length is 25 minutes")
+        timer.stop()
+
+        let focusOver = FocusTimer.endNotice(for: .focus, focusMinutes: 40)
+        expect(focusOver.title == "Time for a break" && focusOver.body.contains("40 minutes of focus")
+               && focusOver.body.contains("5-minute break"),
+               "the notice at the end of focus names the length that was chosen")
+        let breakOver = FocusTimer.endNotice(for: .rest, focusMinutes: 40)
+        expect(breakOver.title == "Break's over" && !breakOver.body.isEmpty
+               && !breakOver.body.contains("25") && !breakOver.body.contains("40"),
+               "the notice at the end of a break doesn't promise a length for the next session")
+
+        // Choosing the length in the panel.
+        let chooser = try sampleModel("check-focus-choices", tasks: [])
+        expect(!chooser.isChoosingFocus, "the lengths are tucked away to begin with")
+        chooser.toggleFocusChoices()
+        expect(chooser.isChoosingFocus && chooser.focus.phase == nil,
+               "the timer button brings them out without starting anything")
+        chooser.toggleFocusChoices()
+        expect(!chooser.isChoosingFocus, "and puts them away again")
+        chooser.toggleFocusChoices()
+        chooser.startFocus(minutes: 60)
+        expect(!chooser.isChoosingFocus && chooser.focus.phase == .focus
+               && chooser.focus.timeText == "60:00",
+               "choosing a length starts the timer and puts the choices away")
+        chooser.focus.stop()
+        chooser.toggleFocusChoices()
+        chooser.panelWillAppear()
+        expect(!chooser.isChoosingFocus, "reopening the panel puts the choices away")
+
+        // The same with real clicks: the timer button in the header, then a length.
+        let panel = CGSize(width: PanelMetrics.width, height: PanelMetrics.height)
+        let clicked = try sampleModel("check-focus-clicks", tasks: [("One", false)])
+        let stage = Stage(RootView(model: clicked), size: panel)
+        try await stage.settle(450)
+        try await stage.click(CGPoint(x: 284, y: 34))
+        try await stage.settle(300)
+        expect(clicked.isChoosingFocus && clicked.focus.phase == nil,
+               "clicking the timer button shows the lengths")
+        try await stage.click(CGPoint(x: 226, y: 100))
+        try await stage.settle(300)
+        expect(clicked.focus.phase == .focus && clicked.focus.focusMinutes == 40
+               && !clicked.isChoosingFocus,
+               "and clicking \"40 min\" starts 40 minutes of focus")
+        clicked.focus.stop()
+        stage.window.close()
 
         expect(FocusTimer.clockText(599) == "9:59" && FocusTimer.clockText(5) == "0:05",
                "shows minutes and two-digit seconds")

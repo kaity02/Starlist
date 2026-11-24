@@ -42,6 +42,8 @@ public final class AppModel: ObservableObject {
     @Published public var laterDraft = ""
     @Published public var editingID: UUID?
     @Published public var expandedArchive: URL?
+    /// True while the list shows the lengths of focus to choose from.
+    @Published public private(set) var isChoosingFocus = false
     @Published public private(set) var banner: Banner?
     @Published public private(set) var isArchiving = false
     /// Bumped whenever the "Add a task" field should take the keyboard.
@@ -112,6 +114,7 @@ public final class AppModel: ObservableObject {
     public func panelWillAppear(showing requested: Screen? = nil) {
         today = Date()
         editingID = nil
+        isChoosingFocus = false
         screen = requested ?? (resumesNotionSetup ? .notion : .list)
         if screen == .list || screen == .later { focusComposer() }
         // Anything still waiting for Notion (offline earlier, app quit) goes now.
@@ -170,6 +173,19 @@ public final class AppModel: ObservableObject {
     public func cancelEditing() {
         editingID = nil
         focusComposer()
+    }
+
+    // MARK: Focus timer
+
+    /// Shows the lengths of focus to choose from, or puts them away again.
+    /// Nothing starts until one is chosen.
+    public func toggleFocusChoices() {
+        isChoosingFocus = focus.phase == nil && !isChoosingFocus
+    }
+
+    public func startFocus(minutes: Int) {
+        isChoosingFocus = false
+        focus.start(minutes: minutes)
     }
 
     // MARK: Later

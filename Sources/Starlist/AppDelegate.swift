@@ -54,7 +54,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             DispatchQueue.main.async { self?.chooseArchiveFolder() }
         }
         model.focus.onPhaseEnd = { [weak self] phase in
-            self?.alerts.announceEnd(of: phase)
+            guard let self else { return }
+            self.alerts.announceEnd(of: phase, focusMinutes: self.model.focus.focusMinutes)
         }
 
         // Lists archived while offline, or just before quitting, go to Notion now.

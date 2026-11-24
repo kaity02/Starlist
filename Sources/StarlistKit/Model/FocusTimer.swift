@@ -1,8 +1,8 @@
 import Foundation
 
-/// The Pomodoro timer: 25 minutes of focus, then a 5-minute break. After the
-/// break it waits to be started again, so it never runs on with nobody there.
-/// It lives in memory only, so quitting the app ends it.
+/// The Pomodoro timer: 25, 40 or 60 minutes of focus, then a 5-minute break.
+/// After the break it waits to be started again, so it never runs on with
+/// nobody there. It lives in memory only, so quitting the app ends it.
 @MainActor
 public final class FocusTimer: ObservableObject {
     public enum Phase: Equatable, Sendable {
@@ -11,8 +11,13 @@ public final class FocusTimer: ObservableObject {
         case rest
     }
 
-    public static let focusLength: TimeInterval = 25 * 60
+    /// The lengths of focus to choose from, in minutes. The first is the usual one.
+    public nonisolated static let focusChoices = [25, 40, 60]
     public static let breakLength: TimeInterval = 5 * 60
+
+    /// How long the focus of this session is, in minutes. Once the timer has
+    /// stopped, how long the last one was.
+    public private(set) var focusMinutes = FocusTimer.focusChoices[0]
 
     /// Nil while the timer is not in use.
     @Published public private(set) var phase: Phase?
@@ -45,13 +50,27 @@ public final class FocusTimer: ObservableObject {
     /// How far through the current phase, from 0 to 1.
     public var progress: Double {
         guard let phase else { return 0 }
-        return 1 - Double(secondsLeft) / Self.length(of: phase)
+        return 1 - Double(secondsLeft) / length(of: phase)
     }
 
     public var timeText: String { Self.clockText(secondsLeft) }
 
-    public static func length(of phase: Phase) -> TimeInterval {
-        phase == .focus ? focusLength : breakLength
+    /// How long a phase of this session lasts.
+    public func length(of phase: Phase) -> TimeInterval {
+        phase == .focus ? TimeInterval(focusMinutes * 60) : Self.breakLength
+    }
+
+    /// What to tell the user when a phase has run out: the words of the
+    /// notification. `focusMinutes` is how long the session's focus was.
+    public static func endNotice(for phase: Phase, focusMinutes: Int) -> (title: String, body: String) {
+        switch phase {
+        case .focus:
+            let rest = Int(breakLength / 60)
+            return ("Time for a break",
+                    "\(focusMinutes) minutes of focus done. Your \(rest)-minute break has started.")
+        case .rest:
+            return ("Break's over", "Start the timer when you're ready to focus again.")
+        }
     }
 
     /// Minutes and seconds, as on a kitchen timer: "25:00", "4:59".
@@ -61,8 +80,10 @@ public final class FocusTimer: ObservableObject {
 
     // MARK: Controls
 
-    /// Begins a focus session, whatever the timer was doing before.
-    public func start() {
+    /// Begins a focus session of the given length, whatever the timer was
+    /// doing before.
+    public func start(minutes: Int = FocusTimer.focusChoices[0]) {
+        focusMinutes = max(1, minutes)
         begin(.focus)
     }
 
@@ -119,7 +140,7 @@ public final class FocusTimer: ObservableObject {
     // MARK: Running
 
     private func begin(_ next: Phase) {
-        let length = Self.length(of: next)
+        let length = length(of: next)
         endsAt = clock().addingTimeInterval(length)
         isPaused = false
         // The time first, so nothing ever shows the new phase with the old time.

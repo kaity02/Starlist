@@ -8,7 +8,7 @@ A to-do list that lives in the macOS menu bar. Click the shooting star, type a t
 - **Check it off.** Click the circle. It becomes a star, a small comet crosses the task out, and the task drops to the bottom of the list, below everything still to do. New tasks land above the finished ones.
 - **Finish everything.** Checking off the last task sets off a burst of stars and earns the day's star.
 - **See what's left at a glance.** The menu bar icon carries a red dot while any task is unfinished.
-- **Focus with a timer.** Click the timer at the top of the list for 25 minutes of focus, then a 5-minute break. When the break is over, click it again for the next 25 minutes. The time left shows in the menu bar beside the star.
+- **Focus with a timer.** Click the timer at the top of the list and choose 25, 40 or 60 minutes of focus. A 5-minute break follows. When the break is over, click the timer again for the next session. The time left shows in the menu bar beside the star.
 - **Keep things for later.** The Later list holds tasks for another day. They don't count toward today: no red dot, no star, and Archive leaves them alone. Hover a task and click the clock to put it off, or "Do today" to bring it back.
 - **Archive the list.** Nothing is archived until you press "Archive list". Then the whole list, finished or not, is saved as a Markdown file. Finished tasks leave the list; unfinished ones stay on it for another day. A banner offers **Undo** for a few seconds.
 - **History.** A calendar with a star on every day you finished your whole list, and below it every archived list, which you can open in your Markdown editor or show in Finder.
@@ -48,6 +48,8 @@ The secret is stored in a file only your account can read, `~/Library/Applicatio
 Earlier versions kept the secret in your login keychain. The first time a newer build needs it, macOS asks once for your login keychain password, which is the password you use to log in to your Mac, not the Notion secret. Starlist then moves the secret into the file and macOS doesn't ask again, including after rebuilding the app.
 
 ## The focus timer
+
+Clicking the timer shows three lengths: 25, 40 or 60 minutes. Click one to start, or click the timer again to put them away. The break is 5 minutes whichever you choose.
 
 The timer keeps running with the panel closed. When a focus session ends, a notification says so and the break starts by itself. When the break ends, another notification says so and the timer waits: the next session starts when you click the timer again. In the panel, Pause holds the time where it is and Stop clears the timer.
 

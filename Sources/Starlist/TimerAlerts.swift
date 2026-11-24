@@ -21,19 +21,9 @@ final class TimerAlerts: NSObject, UNUserNotificationCenterDelegate {
         center?.requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    func announceEnd(of phase: FocusTimer.Phase) {
-        let focus = Int(FocusTimer.focusLength / 60)
-        let rest = Int(FocusTimer.breakLength / 60)
-        let title: String
-        let body: String
-        switch phase {
-        case .focus:
-            title = "Time for a break"
-            body = "\(focus) minutes of focus done. Your \(rest)-minute break has started."
-        case .rest:
-            title = "Break's over"
-            body = "Start the timer when you're ready for the next \(focus) minutes."
-        }
+    /// `focusMinutes` is how long the focus of the session was.
+    func announceEnd(of phase: FocusTimer.Phase, focusMinutes: Int) {
+        let (title, body) = FocusTimer.endNotice(for: phase, focusMinutes: focusMinutes)
 
         guard let center else { return Self.chime() }
         center.getNotificationSettings { settings in
