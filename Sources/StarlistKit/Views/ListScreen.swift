@@ -9,7 +9,9 @@ struct ListScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             ListHeader(model: model)
-            FocusStrip(timer: model.focus)
+            FocusStrip(timer: model.focus, isChoosing: model.isChoosingFocus) { minutes in
+                model.startFocus(minutes: minutes)
+            }
 
             Group {
                 if model.store.items.isEmpty {
@@ -81,7 +83,9 @@ private struct ListHeader: View {
                     .foregroundStyle(Sky.moonlight)
                 Spacer()
                 HStack(spacing: 0) {
-                    FocusStartButton(timer: model.focus)
+                    FocusStartButton(timer: model.focus, isChoosing: model.isChoosingFocus) {
+                        model.toggleFocusChoices()
+                    }
                     IconButton(systemName: "ellipsis", label: "Settings") {
                         model.onShowSettingsMenu()
                     }
